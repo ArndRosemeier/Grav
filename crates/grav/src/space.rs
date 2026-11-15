@@ -106,10 +106,16 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
     }
     // The rest of the cavern: scenery in level-of-detail sets.
     for piece in crate::cavern::Cavern::new().build()? {
+        let near = piece.near;
         let set = world.spawn_lod_prepared(piece.levels)?;
         world.set_lod_places(set, &piece.places)?;
         for level in world.lod_levels(set)? {
-            world.set_custom_material(level, look.cavern_material())?;
+            let material = if near {
+                look.rock_material(rock::RockKind::FarSpire)
+            } else {
+                look.cavern_material()
+            };
+            world.set_custom_material(level, material)?;
             world.set_casts_shadow(level, false)?;
         }
     }

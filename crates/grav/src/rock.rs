@@ -846,91 +846,6 @@ fn island_job(rock: &Rock) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send
     })
 }
 
-/// A far spire of the cavern: scenery, in world space already.
-#[derive(Clone, Copy, Debug)]
-pub struct FarSpire {
-    /// Where it leaves the wall.
-    pub root: Vec3,
-    /// The way it points (unit).
-    pub axis: Vec3,
-    pub length: f32,
-    pub radius: f32,
-    pub seed: u32,
-}
-
-/// The neighbouring spires that fill the view from this one.
-pub fn far_spires(heart_dir: Vec3) -> Vec<FarSpire> {
-    // (x, y) on the wall, length, radius. Laid out by hand so no two cross
-    // and the view from the town street has depth on every side.
-    let spots: [(f32, f32, f32, f32); 11] = [
-        (-330.0, 180.0, 520.0, 62.0),
-        (360.0, 250.0, 640.0, 75.0),
-        (290.0, -310.0, 430.0, 55.0),
-        (-420.0, -260.0, 700.0, 84.0),
-        (-70.0, 520.0, 780.0, 90.0),
-        (640.0, -40.0, 560.0, 70.0),
-        (-690.0, 60.0, 600.0, 72.0),
-        (120.0, -610.0, 520.0, 66.0),
-        (-560.0, 560.0, 880.0, 100.0),
-        (700.0, 620.0, 820.0, 96.0),
-        (620.0, -600.0, 760.0, 88.0),
-    ];
-    spots
-        .iter()
-        .enumerate()
-        .map(|(i, &(x, y, length, radius))| {
-            // Spires lean inward, towards the heart, each a little its own way.
-            let lean = Vec3::new(
-                ((i * 37 % 11) as f32 / 11.0 - 0.5) * 0.5,
-                ((i * 53 % 13) as f32 / 13.0 - 0.5) * 0.5,
-                0.0,
-            );
-            let axis = (Vec3::Z * 0.75 + heart_dir * 0.45 + lean).normalize();
-            FarSpire {
-                root: Vec3::new(x, y, WALL_Z - 20.0),
-                axis,
-                length,
-                radius,
-                seed: 100 + i as u32,
-            }
-        })
-        .collect()
-}
-
-fn far_spire_job(
-    rock: &Rock,
-    spire: FarSpire,
-) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send> {
-    let rock = rock.clone();
-    Box::new(move || {
-        let seed_shift = spire.seed as f32 * 313.7;
-        let (rows, cols) = (150, 96);
-        let side = spire.axis.any_orthonormal_vector();
-        let up = spire.axis.cross(side);
-        let point = move |r: i32, c: i32| {
-            let t = (r as f32 / rows as f32).clamp(0.0, 1.0);
-            let theta = c as f32 / cols as f32 * TAU;
-            let ring = side * theta.cos() + up * theta.sin();
-            let on = ring * spire.radius + spire.axis * (t * spire.length);
-            let taper = 1.0 - t.powf(1.5);
-            let flare = (1.0 - smooth(0.0, 0.12, t)) * 0.6;
-            // Broken rock, with features sized to the spire.
-            let k = spire.radius / 50.0;
-            let rough = rock.broken(on + Vec3::splat(seed_shift), k) / spire.radius;
-            let r = spire.radius * (taper + flare + rough * (0.3 + 0.7 * taper)).max(0.01);
-            spire.root + spire.axis * (t * spire.length) + ring * r
-        };
-        // Rows run along the axis, columns around from `side` to `up`
-        // (axis x side): du x dv points inward, so turn it round.
-        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, &|_, _| [0.0, 0.0], true)?;
-        Ok(RockPiece {
-            kind: RockKind::FarSpire,
-            mesh: mesh.prepare(),
-            solid: false,
-        })
-    })
-}
-
 /// Build all the rock on worker threads. Takes a few seconds; the caller
 /// spawns the pieces.
 pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
@@ -939,9 +854,6 @@ pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
     jobs.extend(wall_chunks(rock, &waters));
     jobs.extend(water_jobs(&waters));
     jobs.push(island_job(rock));
-    for s in far_spires(heart_dir) {
-        jobs.push(far_spire_job(rock, s));
-    }
     on_workers(jobs)
 }
 
