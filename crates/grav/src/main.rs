@@ -1,0 +1,521 @@
+//! Grav sandbox: one spire, the hero, stones and a world that reacts.
+//!
+//! Keys: WASD walk, Q/E turn (or the mouse with the right button held),
+//! Space jump (push off while drifting), 1-9 pick a stone, F hold to open,
+//! C hold to close (costs coating), G take in hand / pack, T hold to aim
+//! and release to throw, V set on the surface in reach, X recover, Z recall,
+//! R hold for stone sense, P sandbox palette.
+
+mod hero;
+mod link;
+mod response;
+mod space;
+mod stones;
+mod visuals;
+
+use engine::egui;
+use engine::glam::Vec2;
+use engine::prelude::*;
+use grav_core::{BodyQuery, Charge, LodestoneBody, Placement, Profile, Tuning, G};
+use hero::{Hero, HeroInput};
+use response::Response;
+use std::collections::HashMap;
+use stones::{field_with, Inventory};
+use visuals::Visuals;
+
+struct Game {
+    tuning: Tuning,
+    base: grav_core::Field,
+    hero: Hero,
+    inv: Inventory,
+    response: Response,
+    visuals: Visuals,
+    palette: bool,
+    aiming_before: bool,
+    demo: Option<Demo>,
+}
+
+/// A scripted run for verify (no keys there): set a stone by a house, open
+/// it, watch tiles and timber come down, close it and pay for it.
+#[derive(Default)]
+struct Demo {
+    step: u32,
+    coating_before: f32,
+    broken_open: usize,
+}
+
+fn load_tuning() -> Tuning {
+    match std::fs::read_to_string("tuning.json") {
+        Ok(text) => Tuning::from_json(&text).unwrap_or_else(|e| {
+            eprintln!("tuning.json: {e}; using the defaults");
+            Tuning::default()
+        }),
+        Err(_) => Tuning::default(),
+    }
+}
+
+fn setup(world: &mut World) -> EngineResult<Game> {
+    let tuning = load_tuning();
+    world.set_clear_color(rgb(14, 13, 20));
+    // The heart is overhead here: light comes from it.
+    world.set_sun((0.15, 1.0, 0.1), 0.35);
+    world.set_sun_color(Vec3::new(1.0, 0.9, 0.78));
+    let mut haze = Haze::new(rgb(26, 24, 34), 700.0);
+    haze.base_y = -10_000.0;
+    haze.height_m = 100_000.0;
+    world.set_haze(Some(haze));
+    world.set_view_distance(1500.0)?;
+    world.set_physics_settings(PhysicsSettings {
+        ground: PhysicsGround::None,
+        ..PhysicsSettings::default()
+    })?;
+    space::build_rock(world)?;
+    let base = space::base_field();
+    let built = space::build_town(world, &tuning, &base)?;
+    // Warm windows: a few lamps in the street.
+    for z in [-50.0, -30.0, -10.0, 10.0] {
+        let (at, rot) = space::spire_frame(0.0, z);
+        world.add_lamp(Lamp::point(
+            at + rot * Vec3::new(0.0, 2.6, 0.0),
+            rgb(255, 190, 120),
+            3.0,
+            14.0,
+        ))?;
+    }
+    for x in [-80.0, 80.0] {
+        let (at, rot) = space::wall_frame(x, 0.0);
+        world.add_lamp(Lamp::point(
+            at + rot * Vec3::new(0.0, 3.0, 3.0),
+            rgb(255, 160, 90),
+            3.0,
+            16.0,
+        ))?;
+    }
+    let (at, _) = space::spire_frame(0.0, -75.0);
+    let hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y)?;
+    let inv = Inventory::new(world, &tuning)?;
+    let response = Response::new(world, built);
+    let visuals = Visuals::new(world, at)?;
+    link::install(world, &base, HashMap::new());
+    let demo = std::env::var("ENGINE_VERIFY").is_ok().then(Demo::default);
+    Ok(Game {
+        tuning,
+        base,
+        hero,
+        inv,
+        response,
+        visuals,
+        palette: false,
+        aiming_before: false,
+        demo,
+    })
+}
+
+fn main() -> EngineResult<()> {
+    let settings = Settings::default()
+        .window(1280, 720)
+        .quality(Quality::High)
+        .vsync(false);
+    let mut game: Option<Game> = None;
+    Engine::run_with_settings("Grav", settings, move |world, frame| {
+        if frame.first {
+            game = Some(setup(world)?);
+        }
+        let Some(g) = game.as_mut() else {
+            return Ok(());
+        };
+        frame_update(g, world, frame)
+    })
+}
+
+fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<()> {
+    let dt = frame.dt;
+    let input = &frame.input;
+    let hero_id = g.hero.id;
+    let feet = g.hero.feet(world);
+    let head = g.hero.head(world);
+    let aim = (g.hero.heading * 0.9 - g.hero.cam_up * 0.25).normalize();
+
+    // --- Stone handling ---
+    let mut keys = HeroInput {
+        walk: input.move_xz(),
+        turn: input.axis(Key::Q, Key::E) * 100.0 * dt,
+        jump: input.pressed(Key::Space),
+    };
+    if input.mouse_down(MouseButton::Right) {
+        keys.turn -= input.look_delta(0.15).0;
+    }
+    for (k, key) in [
+        Key::Digit1,
+        Key::Digit2,
+        Key::Digit3,
+        Key::Digit4,
+        Key::Digit5,
+        Key::Digit6,
+        Key::Digit7,
+        Key::Digit8,
+        Key::Digit9,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if input.pressed(key) && k < g.inv.stones.len() {
+            g.inv.selected = k;
+        }
+    }
+    let step = Inventory::sheath_step(dt);
+    if input.down(Key::F) {
+        g.inv.open(hero_id, step);
+    }
+    if input.down(Key::C) {
+        g.inv.close(step, feet, world);
+    }
+    if input.pressed(Key::G) {
+        g.inv.hold_or_stow(hero_id);
+    }
+    let aim_hit = |world: &World| world.cast_ray_ignoring(head, aim, g.tuning.throw_range, hero_id);
+    if input.pressed(Key::V) {
+        let hit = aim_hit(world);
+        g.inv.set(hit);
+    }
+    if input.pressed(Key::X) {
+        g.inv.recover(hero_id, feet, world);
+    }
+    if input.pressed(Key::Z) {
+        g.inv.recall();
+    }
+    let aiming = input.down(Key::T);
+    if g.aiming_before && !aiming {
+        let hit = aim_hit(world);
+        g.inv.throw(g.hero.hand(world), hit);
+    }
+    g.aiming_before = aiming;
+    if input.pressed(Key::P) {
+        g.palette = !g.palette;
+    }
+    if let Some(demo) = g.demo.as_mut() {
+        run_demo(demo, g.hero.id, &mut g.inv, &g.response, world, frame)?;
+        keys = HeroInput::default();
+    }
+    g.inv.tick(world, dt);
+
+    // --- The field this frame ---
+    let up = g.hero.state(world).up;
+    let up = if up.length_squared() > 0.5 {
+        up
+    } else {
+        g.hero.cam_up
+    };
+    let hand = g.hero.hand(world);
+    let field = field_with(&g.base, g.inv.sources(hero_id, hand, up));
+    link::install(world, &field, HashMap::new());
+
+    // A15: a held stone is pushed by opposite charges, and drags the hero.
+    let held = g
+        .inv
+        .stones
+        .iter()
+        .find(|s| matches!(s.placement, Placement::Held { .. }) && s.opening > 0.0);
+    if let Some(s) = held {
+        let q = BodyQuery {
+            id: hero_id.raw(),
+            position: hand,
+            mass: 1.0,
+            lodestone: Some(LodestoneBody {
+                charge: s.spec.charge,
+                opening: s.opening,
+                source: Some(s.id),
+            }),
+        };
+        let ordinary = field.parts(&q).total();
+        let push = field.acceleration(&q) - ordinary * (1.0 - s.opening);
+        if push.length_squared() > 1e-6 {
+            world.push_character(hero_id, push * dt)?;
+        }
+    }
+
+    g.hero.update(world, keys, &g.tuning.movement, dt)?;
+    g.response.step(world, &field, feet, dt)?;
+
+    // --- Field visuals ---
+    g.visuals.dust(world, &field, head, dt)?;
+    g.visuals
+        .sense(world, input.down(Key::R).then_some(&field), head)?;
+    let opening_keys = input.down(Key::F) || input.down(Key::C);
+    let preview = if aiming {
+        aim_hit(world).map(|hit| {
+            let s = g.inv.current();
+            let mut probe = s.clone();
+            probe.opening = 1.0;
+            let mut with = field.clone();
+            with.sources.retain(|x| x.id != s.id);
+            with.sources
+                .push(probe.source_at(hit.point + hit.normal * 0.15, hit.normal, None));
+            (hit.point, with)
+        })
+    } else {
+        None
+    };
+    match &preview {
+        Some((landing, with)) => {
+            let center = feet + up * 0.7;
+            let fall = with.acceleration(&BodyQuery {
+                id: hero_id.raw(),
+                position: center,
+                mass: 70.0,
+                lodestone: None,
+            });
+            g.visuals.preview(
+                world,
+                Some((*landing, center + up * 0.0 + g.hero.heading * 0.0, fall)),
+            )?;
+            g.response.preview(world, Some(with))?;
+        }
+        None => {
+            g.visuals.preview(world, None)?;
+            g.response.preview(world, None)?;
+        }
+    }
+    g.inv.draw(world, hand, aiming || opening_keys)?;
+
+    // --- HUD ---
+    hud(g, world, frame);
+
+    // --- Self-checks ---
+    let r = Vec2::new(feet.x, feet.y).length();
+    world.check(
+        "hero is outside the spire's rock",
+        feet.z < space::WALL_Z + 0.5 || r > space::SPIRE_RADIUS - 0.5 || feet.z > space::SPIRE_END,
+    );
+    world.check(
+        "field is finite at the hero",
+        field.acceleration(&BodyQuery::at(head)).is_finite(),
+    );
+    world.report("hero_pull_g", g.hero.pull_g);
+    world.report("coating", g.inv.coating.units);
+    world.report("pieces_broken", g.response.broken_total);
+    Ok(())
+}
+
+fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
+    let ui = &frame.ui;
+    let s = g.inv.current();
+    let charge = match s.spec.charge {
+        Charge::Attracting => "attracting",
+        Charge::Repelling => "repelling",
+    };
+    let place = match s.placement {
+        Placement::Packed => "packed",
+        Placement::Held { .. } => "in hand",
+        Placement::Set { .. } => "set",
+        Placement::Loose { .. } => "flying",
+    };
+    ui.text(
+        Anchor::TopLeft,
+        format!(
+            "Stone {} of {}: {} ({charge}, {:.1} g, {:.0} m, {:?})",
+            g.inv.selected + 1,
+            g.inv.stones.len(),
+            s.spec.name,
+            s.spec.max_g,
+            s.spec.radius,
+            s.spec.profile
+        ),
+    );
+    ui.bar(
+        Anchor::TopLeft,
+        "Sheath open",
+        s.opening,
+        1.0,
+        rgb(230, 170, 70),
+    );
+    ui.text(Anchor::TopLeft, format!("It is {place}"));
+    if g.inv.coating.unlimited {
+        ui.text(Anchor::TopLeft, "Coating: unlimited");
+    } else {
+        ui.bar(
+            Anchor::TopLeft,
+            "Coating",
+            g.inv.coating.units,
+            g.tuning.start_coating.max(g.inv.coating.units),
+            rgb(170, 170, 200),
+        );
+    }
+    ui.bar(
+        Anchor::TopRight,
+        "Health",
+        g.hero.health,
+        100.0,
+        rgb(200, 60, 60),
+    );
+    let state = if g.hero.drifting {
+        "drifting".to_string()
+    } else if g.hero.walking_allowed {
+        "standing".to_string()
+    } else {
+        "falling".to_string()
+    };
+    ui.text(
+        Anchor::TopRight,
+        format!("Pull {:.2} g, {state}", g.hero.pull_g),
+    );
+    ui.text(
+        Anchor::TopRight,
+        format!(
+            "Broken pieces {}, warning {}",
+            g.response.broken_total, g.response.warning_now
+        ),
+    );
+    if let Some((m, _)) = &g.inv.message {
+        ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
+    }
+    ui.text_styled(
+        Anchor::Bottom,
+        "WASD walk  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  T aim+throw  V set  X recover  Z recall  R sense  P palette",
+        14.0,
+        rgb(220, 220, 220),
+    );
+    if g.palette {
+        palette(g, world, frame);
+    }
+}
+
+/// Sandbox palette: dress the selected stone freely, coating on or off.
+fn palette(g: &mut Game, _world: &mut World, frame: &Frame) {
+    let t = &g.tuning;
+    let (max_g, max_r) = (t.loot_max_g, t.loot_max_radius);
+    let mut unlimited = g.inv.coating.unlimited;
+    let (selected, count, pull) = (g.inv.selected, g.inv.stones.len(), g.hero.pull_g);
+    let s = &mut g.inv.stones[selected];
+    egui::Window::new("Sandbox palette").show(frame.ui.ctx(), |ui| {
+        ui.label(format!("Stone {}", selected + 1));
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut s.spec.charge, Charge::Attracting, "Attracting");
+            ui.selectable_value(&mut s.spec.charge, Charge::Repelling, "Repelling");
+        });
+        ui.horizontal_wrapped(|ui| {
+            for p in [
+                Profile::Core,
+                Profile::Leash,
+                Profile::Shell,
+                Profile::Uniform,
+                Profile::Plane,
+                Profile::Line,
+            ] {
+                ui.selectable_value(&mut s.spec.profile, p, format!("{p:?}"));
+            }
+        });
+        ui.add(egui::Slider::new(&mut s.spec.max_g, 0.1..=max_g).text("max g"));
+        ui.add(egui::Slider::new(&mut s.spec.radius, 5.0..=max_r).text("radius m"));
+        let mut pulse = matches!(s.spec.time, grav_core::TimeDial::Pulse { .. });
+        let mut rhythm = matches!(s.spec.time, grav_core::TimeDial::Rhythm { .. });
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut pulse, "Pulse 1 s on / 1 s off").changed() {
+                s.spec.time = if pulse {
+                    grav_core::TimeDial::Pulse { on: 1.0, off: 1.0 }
+                } else {
+                    grav_core::TimeDial::Constant
+                };
+            }
+            if ui.checkbox(&mut rhythm, "Rhythm 4 s").changed() {
+                s.spec.time = if rhythm {
+                    grav_core::TimeDial::Rhythm { period: 4.0 }
+                } else {
+                    grav_core::TimeDial::Constant
+                };
+            }
+        });
+        let mut heavy_only = matches!(s.spec.selectivity, grav_core::Selectivity::MassBand { .. });
+        if ui
+            .checkbox(&mut heavy_only, "Only bodies over 100 kg")
+            .changed()
+        {
+            s.spec.selectivity = if heavy_only {
+                grav_core::Selectivity::MassBand {
+                    min: 100.0,
+                    max: f32::INFINITY,
+                }
+            } else {
+                grav_core::Selectivity::All
+            };
+        }
+        if ui
+            .checkbox(&mut s.spec.spring_sheath, "Spring sheath (recall)")
+            .changed()
+        {
+            s.refill_spring();
+        }
+        ui.checkbox(&mut unlimited, "Unlimited coating");
+        ui.label(format!("{count} stones; pull at the hero {pull:.2} g"));
+    });
+    if unlimited != g.inv.coating.unlimited {
+        g.inv.coating = if unlimited {
+            grav_core::Coating::unlimited()
+        } else {
+            grav_core::Coating::new(g.tuning.start_coating)
+        };
+    }
+}
+
+fn run_demo(
+    demo: &mut Demo,
+    hero: EntityId,
+    inv: &mut Inventory,
+    response: &Response,
+    world: &mut World,
+    frame: &Frame,
+) -> EngineResult<()> {
+    let t = frame.time;
+    match demo.step {
+        0 if t > 0.5 => {
+            // Set the first stone right next to the house at z = 0, and open it.
+            inv.selected = 0;
+            inv.hold_or_stow(hero);
+            let (at, rot) = space::spire_frame(-9.0, 0.0);
+            let target = at + rot * Vec3::new(0.0, 2.5, -3.5);
+            inv.stones[0].placement = Placement::Set {
+                at: target,
+                axis: rot * Vec3::Y,
+                on: None,
+            };
+            inv.stones[0].open_to(1.0);
+            demo.step = 1;
+        }
+        1 if t > 2.5 => {
+            demo.broken_open = response.broken_total;
+            world.check(
+                "an open stone strips tiles and timber nearby",
+                response.broken_total > 0,
+            );
+            // Walk the hero over (the demo teleports): closing needs reach.
+            let (at, rot) = space::spire_frame(-9.0, 0.0);
+            let near = at + rot * Vec3::new(0.0, 0.0, -4.2);
+            world.set_place(hero, Place::new(near.x, near.y + 0.05, near.z))?;
+            demo.step = 2;
+        }
+        2 if t > 3.0 => {
+            demo.coating_before = inv.coating.units;
+            inv.selected = 0;
+            let feet = world.world_transform(hero)?.w_axis.truncate();
+            inv.close(1.0, feet, world);
+            let paid = demo.coating_before - inv.coating.units;
+            world.check(
+                "closing a fully open 1.5 g stone costs 1.5 coating (S9)",
+                (paid - 1.5).abs() < 1e-3,
+            );
+            world.report("demo_paid", paid);
+            demo.step = 3;
+        }
+        3 if t > 4.0 => {
+            world.report("demo_broken_while_open", demo.broken_open);
+            let s = world.character(hero).unwrap_or_default();
+            world.check(
+                "hero stands on the spire after the demo",
+                s.grounded || s.gravity.length() > 0.5 * G,
+            );
+            demo.step = 4;
+        }
+        _ => {}
+    }
+    Ok(())
+}

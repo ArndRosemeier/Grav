@@ -1,0 +1,10 @@
+[package]
+name = "grav"
+description = "Grav: the sandbox on one spire, with the hero, stones and a world that reacts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+grav-core = { path = "../grav-core" }
+engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
