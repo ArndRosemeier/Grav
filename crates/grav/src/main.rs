@@ -7,6 +7,7 @@
 //! R hold for stone sense, P sandbox palette.
 
 mod dwarf;
+mod heart;
 mod hero;
 mod link;
 mod look;

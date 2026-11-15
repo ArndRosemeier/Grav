@@ -6,6 +6,7 @@
 //! lit, shadowed and hazed like everything else. They work from the world
 //! position, so every piece of rock continues the same strata and veins.
 
+use crate::heart;
 use crate::rock::RockKind;
 use engine::prelude::*;
 
@@ -17,10 +18,11 @@ pub fn heart_direction(heart_center: Vec3) -> Vec3 {
 
 /// The heart's light: cold blue-white, the colour of repelling lodestone (L1).
 const HEART_LIGHT: Vec3 = Vec3::new(0.72, 0.84, 1.0);
-/// How far away the heart's stand-in body is drawn, and how big.
-const HEART_SHOWN_AT: f32 = 1500.0;
-/// The heart's real size against its distance: about 20 degrees across.
-const HEART_ANGULAR_RADIUS: f32 = 0.26;
+/// How far away the heart's stand-in body is drawn.
+const HEART_SHOWN_AT: f32 = 1700.0;
+/// The radius of the heart's core there. With its spines the body spans
+/// far more of the sky than one view holds.
+const HEART_CORE: f32 = 340.0;
 
 /// Shared WGSL: hash, value noise, fbm.
 const NOISE: &str = r#"
@@ -230,12 +232,10 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     let hot = vec3<f32>(0.78, 0.92, 1.00);
     var glow = mix(deep, mid, smoothstep(0.25, 0.6, patches) + veins * 0.6);
     glow = mix(glow, hot, clamp(bright + veins * local_pulse * 0.7, 0.0, 1.0));
-    let facing = abs(dot(d, normalize(m.view_dir)));
-    let limb = pow(facing, 0.5);
+    let limb = pow(abs(dot(d, normalize(m.view_dir))), 0.5);
     let energy = (0.05 + 0.55 * bright + 2.4 * veins * (0.25 + local_pulse) + 0.4 * lines * bright)
         * (0.3 + 0.7 * limb);
-    // The edge melts into the glow around it.
-    o.color = vec4<f32>(0.0, 0.0, 0.0, smoothstep(0.0, 0.5, facing));
+    o.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     o.roughness = 1.0;
     o.metallic = 0.0;
     o.emission = glow * energy * m.params[0].x;
@@ -249,7 +249,7 @@ pub struct Look {
     wall: CustomMaterialId,
     island: CustomMaterialId,
     far: CustomMaterialId,
-    heart: EntityId,
+    heart: [EntityId; 2],
     heart_dir: Vec3,
 }
 
@@ -268,16 +268,24 @@ impl Look {
         let wall = world.add_material(stone("dead stone, wall", 1.0, 0.35, 1.0))?;
         let island = world.add_material(stone("dead stone, island", 1.0, 0.6, 0.9))?;
         let far = world.add_material(stone("dead stone, far", 0.5, 0.7, 1.4))?;
-        let heart_material = world.add_material(
-            CustomMaterial::new("heart", format!("{NOISE}{HEART}"))
-                .see_through()
-                .param(0, [9.0, 0.0, 0.0, 0.0]),
+        // The glowing core, seen only between the blades that hide it.
+        let core_material = world.add_material(
+            CustomMaterial::new("heart core", format!("{NOISE}{HEART}"))
+                .param(0, [22.0, 0.0, 0.0, 0.0]),
         )?;
-        let radius = HEART_SHOWN_AT * HEART_ANGULAR_RADIUS;
-        let heart = world.spawn(Mesh::ball(Vec3::ZERO, radius, rgb(255, 255, 255))?);
-        world.set_custom_material(heart, heart_material)?;
-        world.set_place(heart, place_at(heart_dir * HEART_SHOWN_AT))?;
-        world.set_casts_shadow(heart, false)?;
+        let core = world.spawn(Mesh::ball(Vec3::ZERO, 0.7, rgb(255, 255, 255))?);
+        world.set_custom_material(core, core_material)?;
+        let blade_material = world.add_material(
+            CustomMaterial::new("heart blades", format!("{NOISE}{}", heart::BLADES))
+                .param(0, [5.0, 0.0, 0.0, 0.0]),
+        )?;
+        let blades = world.spawn(heart::body()?);
+        world.set_custom_material(blades, blade_material)?;
+        let heart = [core, blades];
+        for id in heart {
+            world.set_place(id, heart_place(heart_dir * HEART_SHOWN_AT))?;
+            world.set_casts_shadow(id, false)?;
+        }
         Ok(Self {
             spire,
             wall,
@@ -318,7 +326,7 @@ impl Look {
         haze.base_y = -100_000.0;
         haze.height_m = 1_000_000.0;
         world.set_haze(Some(haze));
-        world.set_view_distance(4000.0)?;
+        world.set_view_distance(6000.0)?;
         world.set_shadows(Some(ShadowSettings {
             cascade_end_m: [18.0, 70.0, 260.0],
             map_size: 2048,
@@ -332,13 +340,13 @@ impl Look {
     /// Every frame: the heart is so far away that it does not shift as the
     /// camera moves, so its stand-in keeps its distance from the camera.
     pub fn follow_camera(&self, world: &mut World, camera: Vec3) -> EngineResult<()> {
-        world.set_place(
-            self.heart,
-            place_at(camera + self.heart_dir * HEART_SHOWN_AT),
-        )
+        for id in self.heart {
+            world.set_place(id, heart_place(camera + self.heart_dir * HEART_SHOWN_AT))?;
+        }
+        Ok(())
     }
 }
 
-fn place_at(p: Vec3) -> Place {
-    Place::new(p.x, p.y, p.z)
+fn heart_place(p: Vec3) -> Place {
+    Place::new(p.x, p.y, p.z).with_scale(HEART_CORE)
 }
