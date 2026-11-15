@@ -18,10 +18,15 @@ use grav_core::{BondClass, Field, Heart, PieceId, Structure, Tuning, Vein, VeinS
 
 /// The spire's axis runs along +z through the origin.
 pub const SPIRE_RADIUS: f32 = 50.0;
-pub const SPIRE_START: f32 = -260.0;
 pub const SPIRE_END: f32 = 250.0;
 /// The outer wall's face is the plane z = WALL_Z, facing +z.
 pub const WALL_Z: f32 = -250.0;
+/// How deep the wall's vein lies under its face. Rock settles where the
+/// veins' summed potential is equal (`rock.rs`): at this depth the wall's
+/// plane is on the same level as the spire's surface, so one settled
+/// surface runs from the town down the spire's flare and out onto the wall.
+/// (Spire: 20 m above its vein at 1 g; wall: 1.8 g, so 88 / 1.8 m.)
+pub const WALL_VEIN_DEPTH: f32 = 48.89;
 pub const ISLAND_CENTER: Vec3 = Vec3::new(0.0, 210.0, 170.0);
 pub const ISLAND_RADIUS: f32 = 25.0;
 
@@ -44,7 +49,7 @@ pub fn base_field() -> Field {
     let mut wall = Vein::new(
         "outer wall",
         vec![VeinShape::Box {
-            center: Vec3::new(0.0, 0.0, WALL_Z - 35.0),
+            center: Vec3::new(0.0, 0.0, WALL_Z - WALL_VEIN_DEPTH - 15.0),
             rotation: Quat::IDENTITY,
             half: Vec3::new(400.0, 400.0, 15.0),
         }],
@@ -381,7 +386,7 @@ pub fn build_town(world: &mut World, tuning: &Tuning, field: &Field) -> EngineRe
         b.crate_at(f, Vec3::new(-1.0, 0.0, -1.2), 0.8)?;
     }
     // Dwarven houses on the outer wall, near the spire root.
-    for x in [-90.0, -70.0, 70.0, 90.0] {
+    for x in [-190.0, -170.0, 170.0, 190.0] {
         b.house(wall_frame(x, 0.0), true)?;
     }
     // An umbral perch on the island.

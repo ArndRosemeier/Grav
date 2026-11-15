@@ -87,7 +87,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
             14.0,
         ))?;
     }
-    for x in [-80.0, 80.0] {
+    for x in [-180.0, 180.0] {
         let (at, rot) = space::wall_frame(x, 0.0);
         world.add_lamp(Lamp::point(
             at + rot * Vec3::new(0.0, 3.0, 3.0),

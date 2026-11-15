@@ -140,6 +140,28 @@ impl Vein {
         )
     }
 
+    /// The potential of this vein's pull `d` metres from its surface, in
+    /// g times metres: the pull is its downhill slope. It rises by the pull
+    /// per metre through the hold zone, levels off across the fade band and
+    /// is flat beyond it.
+    pub fn potential_at(&self, d: f32) -> f32 {
+        let g = self.surface_g * self.health.clamp(0.0, 1.0);
+        let d = d.max(0.0);
+        if d <= self.hold || self.fade <= self.hold {
+            return g * d.min(self.hold);
+        }
+        let band = self.fade - self.hold;
+        let x = (d - self.hold).min(band);
+        g * (self.hold + x - x * x / (2.0 * band))
+    }
+
+    /// The potential of this vein's pull at `p` (see `potential_at`).
+    /// Loose matter comes to rest on surfaces where the summed potential of
+    /// all veins is equal, so settled rock follows those surfaces.
+    pub fn potential(&self, p: Vec3) -> f32 {
+        self.nearest(p).map_or(0.0, |(_, d)| self.potential_at(d))
+    }
+
     /// Whether `p` can feel this vein at all (a cheap test before `pull`).
     pub fn may_reach(&self, p: Vec3) -> bool {
         self.nearest(p).is_some_and(|(_, d)| d < self.fade)
@@ -173,6 +195,19 @@ mod tests {
         assert!((s - 0.5).abs() < 1e-5);
         assert!((a.y + 0.5 * G).abs() < 1e-4);
         assert_eq!(v.pull(Vec3::new(0.0, 120.0, 0.0)).0, Vec3::ZERO);
+    }
+
+    #[test]
+    fn the_pull_is_the_downhill_slope_of_the_potential() {
+        let v = slab();
+        for y in [5.0_f32, 40.0, 72.0, 85.0, 97.0, 130.0] {
+            let h = 0.05;
+            let slope = (v.potential(Vec3::new(0.0, y + h, 0.0))
+                - v.potential(Vec3::new(0.0, y - h, 0.0)))
+                / (2.0 * h);
+            let pull = v.pull(Vec3::new(0.0, y, 0.0)).0.y / G;
+            assert!((slope + pull).abs() < 2e-3, "at {y}: {slope} and {pull}");
+        }
     }
 
     #[test]

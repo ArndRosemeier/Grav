@@ -117,6 +117,13 @@ impl Field {
         ordinary * (1.0 - u) + self.repulsion(q, stone) * u
     }
 
+    /// The summed potential of all veins at `p`, in g times metres
+    /// (`Vein::potential`). Rock that has settled under the veins' pull
+    /// lies on a surface where this is equal everywhere.
+    pub fn vein_potential(&self, p: Vec3) -> f32 {
+        self.veins.iter().map(|v| v.potential(p)).sum()
+    }
+
     /// The parts of the ordinary field at a body (no charge rules).
     pub fn parts(&self, q: &BodyQuery) -> FieldParts {
         let p = q.position;

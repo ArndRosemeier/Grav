@@ -70,8 +70,10 @@ fn views() -> Vec<View> {
     let side_up = side_rot * Vec3::Y;
     let (crag, crag_rot) = space::spire_frame(-30.0, 100.0);
     let crag_up = crag_rot * Vec3::Y;
-    let (wall, wall_rot) = space::wall_frame(60.0, 6.0);
+    let (wall, wall_rot) = space::wall_frame(180.0, 6.0);
     let wall_up = wall_rot * Vec3::Y;
+    let (road, road_rot) = space::spire_frame(0.0, -120.0);
+    let road_up = road_rot * Vec3::Y;
     let (isle, _) = space::island_frame(Vec3::new(0.6, 0.3, 0.7));
     vec![
         View {
@@ -150,6 +152,41 @@ fn views() -> Vec<View> {
             eye: street + Vec3::X * 16.0 + up * 0.2 + Vec3::Z * 15.0,
             target: street + up * 0.2 + Vec3::Z * 15.0,
             up,
+            zoom: false,
+        },
+        View {
+            name: "road to the wall, from the town's end",
+            eye: road + road_up * 1.7,
+            target: road + road_up * 0.5 - Vec3::Z * 40.0,
+            up: road_up,
+            zoom: false,
+        },
+        View {
+            name: "the flare, from above the road",
+            eye: Vec3::new(40.0, 120.0, -150.0),
+            target: Vec3::new(0.0, 80.0, -235.0),
+            up: Vec3::Y,
+            zoom: false,
+        },
+        View {
+            name: "the flare, from the ring road",
+            eye: Vec3::new(8.0, 137.0, -248.0) + Vec3::Z * 1.7,
+            target: Vec3::new(-10.0, 60.0, -215.0),
+            up: Vec3::Z,
+            zoom: false,
+        },
+        View {
+            name: "on the flare road, looking down to the wall",
+            eye: Vec3::new(1.0, 84.0, -231.0),
+            target: Vec3::new(-6.0, 130.0, -250.0),
+            up: Vec3::new(0.0, 1.0, 1.8).normalize(),
+            zoom: false,
+        },
+        View {
+            name: "the flare and the wall, from the side",
+            eye: Vec3::new(230.0, 150.0, -150.0),
+            target: Vec3::new(0.0, 40.0, -235.0),
+            up: Vec3::Z,
             zoom: false,
         },
         View {
