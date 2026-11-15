@@ -284,6 +284,32 @@ impl Rock {
         out
     }
 
+    /// Wild, broken rock at `p`: how far it stands out, in metres, at
+    /// `scale` 1 (about 20 m either way; larger scales make every feature
+    /// that much larger, for the far scenery).
+    pub fn broken(&self, p: Vec3, scale: f32) -> f32 {
+        let p = p / scale;
+        // Masses, cut into benches: flat treads, steep risers, each bench
+        // its own height so no two cliffs are alike.
+        let mass = self.fbm(p * 0.014, 4);
+        let steps = mass * 8.0 + self.fbm(p * 0.05 + Vec3::splat(5.0), 2) * 0.8;
+        let tread = steps.floor();
+        let riser = smooth(0.72, 0.98, steps - tread);
+        let benches = ((tread + riser) / 8.0 - 0.5) * 30.0;
+        // Joints: blocks at three sizes, each standing a little proud or
+        // set back, with the joint between them cut in.
+        let (big, big_edge) = Self::cells(p / 23.0 + Vec3::splat(3.3));
+        let (mid, mid_edge) = Self::cells(p / 9.0 + Vec3::splat(17.1));
+        let (small, small_edge) = Self::cells(p / 3.6 + Vec3::splat(41.7));
+        let blocks = big * 4.2 + mid * 1.7 + small * 0.55
+            - (1.0 - smooth(0.0, 0.06, big_edge)) * 2.2
+            - (1.0 - smooth(0.0, 0.08, mid_edge)) * 0.9
+            - (1.0 - smooth(0.0, 0.1, small_edge)) * 0.3;
+        // Crags where the rock is hardest.
+        let crags = smooth(0.45, 0.85, self.ridged(p * 0.03 + Vec3::splat(40.0), 4)) * 9.0;
+        (benches + blocks + crags) * scale
+    }
+
     /// How far (metres along the ground) the point at `theta`, `rho` from
     /// the axis is from the nearest road: the road along the top of the
     /// spire, the two that leave it down the flare towards the dwarven
@@ -322,19 +348,10 @@ impl Rock {
         let town = Self::spire_town(z);
         // Town ground: long, low swells, never below the plain cylinder.
         let swell = self.fbm(on * 0.035 + Vec3::splat(3.1), 3) * 0.5;
-        // Wild rock: big masses, flutes along the axis, ledges of folded strata.
-        let mass = (self.fbm(on * 0.016, 4) - 0.45) * 22.0;
-        let crags = (self.ridged(on * 0.045 + Vec3::splat(40.0), 4) - 0.35) * 15.0;
-        let flute_phase = theta * 11.0 + self.fbm(on * 0.02 + Vec3::splat(8.0), 2) * 5.0;
-        let flutes = (flute_phase.sin().abs().powf(0.6) - 0.6) * 3.2;
-        let strata = {
-            let s = (z + self.fbm(on * 0.012 + Vec3::splat(77.0), 3) * 60.0) / 9.0;
-            let f = s - s.floor();
-            // A ledge: slow rise, sharp drop.
-            (smooth(0.0, 0.78, f) - smooth(0.78, 1.0, f)) * 3.4
-        };
-        let wild = mass + crags + flutes + strata;
-        // The taper keeps the tip a point: relief shrinks with the radius.
+        // Wild rock, as rock breaks: great masses cut into benches with
+        // cliffs between them, the whole of it jointed into blocks that
+        // stand proud or have fallen out, and sharp crags on top.
+        let wild = self.broken(on, 1.0);
         let shrink = (0.25 + 0.75 * taper).min(base / 14.0 + 0.05);
         // Outside the town: the road along the top with rocky ground beside
         // it, wild rock further round, and towards the wall the flare's
@@ -436,13 +453,8 @@ impl Rock {
         let under = -3.0 * (1.0 - linear(146.0, 158.0, rho));
         let far = smooth(140.0, 520.0, rho);
         let mass = (self.fbm(on * 0.004 + Vec3::splat(5.0), 3) - 0.42) * (50.0 + 160.0 * far);
-        let buttress = (self.ridged(on * 0.011 + Vec3::splat(21.0), 3) - 0.3) * (44.0 + 60.0 * far);
-        let strata = {
-            let s = (x * 0.35 + y + self.fbm(on * 0.008 + Vec3::splat(55.0), 3) * 120.0) / 14.0;
-            let f = s - s.floor();
-            (smooth(0.0, 0.85, f) - smooth(0.85, 1.0, f)) * 7.0
-        };
-        let wild = mass + buttress + strata;
+        // Broken rock at the wall's size: benches, cliffs and blocks.
+        let wild = mass + self.broken(on, 3.0) * (0.6 + 0.8 * far);
         let height = under + street * swell + (1.0 - street) * wild.max(-8.0);
         // At its edge this wall sinks under the cavern's wall, which takes over.
         let rim = smooth(740.0, 880.0, x.abs().max(y.abs()));
@@ -885,10 +897,13 @@ pub fn far_spires(heart_dir: Vec3) -> Vec<FarSpire> {
         .collect()
 }
 
-fn far_spire_job(spire: FarSpire) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send> {
+fn far_spire_job(
+    rock: &Rock,
+    spire: FarSpire,
+) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send> {
+    let rock = rock.clone();
     Box::new(move || {
-        let noise = Noise::new(spire.seed);
-        let fbm = move |p: Vec3, octaves: u32| noise.fbm3(p, octaves, 2.03, 0.5) * 0.5 + 0.5;
+        let seed_shift = spire.seed as f32 * 313.7;
         let (rows, cols) = (150, 96);
         let side = spire.axis.any_orthonormal_vector();
         let up = spire.axis.cross(side);
@@ -899,18 +914,10 @@ fn far_spire_job(spire: FarSpire) -> Box<dyn FnOnce() -> EngineResult<RockPiece>
             let on = ring * spire.radius + spire.axis * (t * spire.length);
             let taper = 1.0 - t.powf(1.5);
             let flare = (1.0 - smooth(0.0, 0.12, t)) * 0.6;
-            let mass = (fbm(on * 0.012, 4) - 0.45) * 0.55;
-            let flutes = ((theta * 9.0 + fbm(on * 0.01, 2) * 6.0)
-                .sin()
-                .abs()
-                .powf(0.6)
-                - 0.6)
-                * 0.09;
-            let s = (t * spire.length + fbm(on * 0.008, 3) * 90.0) / 16.0;
-            let f = s - s.floor();
-            let strata = (smooth(0.0, 0.82, f) - smooth(0.82, 1.0, f)) * 0.07;
-            let r = spire.radius
-                * (taper + flare + (mass + flutes + strata) * (0.3 + 0.7 * taper)).max(0.01);
+            // Broken rock, with features sized to the spire.
+            let k = spire.radius / 50.0;
+            let rough = rock.broken(on + Vec3::splat(seed_shift), k) / spire.radius;
+            let r = spire.radius * (taper + flare + rough * (0.3 + 0.7 * taper)).max(0.01);
             spire.root + spire.axis * (t * spire.length) + ring * r
         };
         // Rows run along the axis, columns around from `side` to `up`
@@ -933,7 +940,7 @@ pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
     jobs.extend(water_jobs(&waters));
     jobs.push(island_job(rock));
     for s in far_spires(heart_dir) {
-        jobs.push(far_spire_job(s));
+        jobs.push(far_spire_job(rock, s));
     }
     on_workers(jobs)
 }

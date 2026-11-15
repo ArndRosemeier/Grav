@@ -76,26 +76,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     })?;
     space::build_rock(world, &look)?;
     let base = space::base_field();
-    let built = space::build_town(world, &tuning, &base)?;
-    // Warm windows: a few lamps in the street.
-    for z in [-50.0, -30.0, -10.0, 10.0] {
-        let (at, rot) = space::spire_frame(0.0, z);
-        world.add_lamp(Lamp::point(
-            at + rot * Vec3::new(0.0, 2.6, 0.0),
-            rgb(255, 190, 120),
-            3.0,
-            14.0,
-        ))?;
-    }
-    for x in [-180.0, 180.0] {
-        let (at, rot) = space::wall_frame(x, 0.0);
-        world.add_lamp(Lamp::point(
-            at + rot * Vec3::new(0.0, 3.0, 3.0),
-            rgb(255, 160, 90),
-            3.0,
-            16.0,
-        ))?;
-    }
+    // Nothing is built here yet (the stand-in town was torn down).
+    let built = space::Built::default();
     let (at, _) = space::spire_frame(0.0, -75.0);
     let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y, &tuning.movement)?;
     if let Some(body) = dwarf::spawn(world) {
@@ -330,7 +312,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     // --- Self-checks ---
     world.check(
         "hero is outside the spire's rock",
-        !rock::shared().in_spire(feet + g.hero.cam_up * 0.6),
+        !rock::shared().in_spire(feet + g.hero.cam_up * 0.6)
+            && !rock::shared().in_island(feet + g.hero.cam_up * 0.6),
     );
     world.check(
         "field is finite at the hero",
@@ -522,7 +505,7 @@ fn run_demo(
     let t = frame.time;
     match demo.step {
         0 if t > 0.5 => {
-            // Set the first stone right next to the house at z = 0, and open it.
+            // Set the first stone in the street at z = 0, and open it.
             inv.selected = 0;
             inv.hold_or_stow(hero);
             let (at, rot) = space::spire_frame(-9.0, 0.0);
@@ -537,10 +520,6 @@ fn run_demo(
         }
         1 if t > 2.5 => {
             demo.broken_open = response.broken_total;
-            world.check(
-                "an open stone strips tiles and timber nearby",
-                response.broken_total > 0,
-            );
             // Walk the hero over (the demo teleports): closing needs reach.
             let (at, rot) = space::spire_frame(-9.0, 0.0);
             let near = at + rot * Vec3::new(0.0, 0.0, -4.2);

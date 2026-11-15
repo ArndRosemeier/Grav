@@ -42,6 +42,32 @@ fn gv_noise(p: vec3<f32>) -> f32 {
 fn gv_fbm3(p: vec3<f32>) -> f32 {
     return gv_noise(p) * 0.57 + gv_noise(p * 2.07 + 11.3) * 0.29 + gv_noise(p * 4.21 + 27.1) * 0.14;
 }
+// Broken rock: p falls in one of many irregular cells. Returns the cell's
+// own number (0..1) in x and the distance to the cell's edge in y (0 on a
+// joint between two cells).
+fn gv_cells(p: vec3<f32>) -> vec2<f32> {
+    let base = floor(p);
+    var d1 = 9.0;
+    var d2 = 9.0;
+    var own = 0.0;
+    for (var i = -1; i <= 1; i = i + 1) {
+        for (var j = -1; j <= 1; j = j + 1) {
+            for (var k = -1; k <= 1; k = k + 1) {
+                let c = base + vec3<f32>(f32(i), f32(j), f32(k));
+                let at = c + vec3<f32>(gv_hash(c + 1.7), gv_hash(c + 5.3), gv_hash(c + 9.1));
+                let d = distance(at, p);
+                if (d < d1) {
+                    d2 = d1;
+                    d1 = d;
+                    own = gv_hash(c + 13.9);
+                } else if (d < d2) {
+                    d2 = d;
+                }
+            }
+        }
+    }
+    return vec2<f32>(own, d2 - d1);
+}
 fn gv_fbm5(p: vec3<f32>) -> f32 {
     return gv_noise(p) * 0.5 + gv_noise(p * 2.07 + 11.3) * 0.26 + gv_noise(p * 4.21 + 27.1) * 0.13
         + gv_noise(p * 8.4 + 5.7) * 0.07 + gv_noise(p * 17.1 + 41.9) * 0.04;
@@ -73,8 +99,10 @@ fn rock_relief(p: vec3<f32>, layer: f32) -> f32 {
 
 // One family of metal threads: thin parallel curves, as if a field combed them.
 fn metal_threads(p: vec3<f32>, dir: vec3<f32>, bend: vec3<f32>, spacing: f32, width: f32, warp: f32) -> f32 {
-    let c = dot(p, dir) / spacing + sin(dot(p, bend) * 0.045) * 2.6 + warp * 3.0
-        + (gv_fbm3(p * 0.19 + 17.0) - 0.5) * 2.4 + (gv_noise(p * 1.3) - 0.5) * 0.22;
+    // Nearly straight and parallel, as a comb leaves them: a slow lean, a
+    // little unevenness, no snaking.
+    let c = dot(p, dir) / spacing + dot(p, bend) * 0.012 + warp * 1.2
+        + (gv_fbm3(p * 0.05 + 17.0) - 0.5) * 0.9 + (gv_noise(p * 1.3) - 0.5) * 0.1;
     let f = abs(fract(c) - 0.5);
     // Threads come and go along their length.
     let along = gv_noise(vec3<f32>(floor(c) * 7.3, dot(p, bend) * 0.11, 3.0));
@@ -92,9 +120,19 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     let n0 = normalize(m.normal);
 
     // Strata: with no single down the layers curl and fold (L9).
+    // They are broken, not drawn with a pen: the rock is in blocks, each
+    // slipped against its neighbours along joints, so layers end at a joint
+    // and go on higher or lower beyond it. Beds differ in thickness, and
+    // their edges are ragged.
     let warp = gv_fbm3(p * 0.021);
-    let fold = gv_fbm3(p * 0.006 + 40.0);
-    let s = dot(p, vec3<f32>(0.24, 0.93, 0.28)) * 0.55 + fold * 46.0 + warp * 7.0;
+    let fold = gv_fbm3(p * 0.004 + 40.0);
+    let blocks = gv_cells(p * vec3<f32>(0.085, 0.06, 0.075) + (warp - 0.5) * 0.5);
+    let joint = 1.0 - smoothstep(0.0, 0.035, blocks.y);
+    let slip = (blocks.x - 0.5) * 7.0;
+    let ragged = (gv_noise(p * 2.1) - 0.5) * 0.35 + (gv_noise(p * 7.0) - 0.5) * 0.12;
+    let s0 = dot(p, vec3<f32>(0.24, 0.93, 0.28)) * 0.42 + fold * 13.0 + warp * 2.0 + slip;
+    // Beds of uneven thickness: thick and thin ones in runs.
+    let s = s0 + gv_noise(vec3<f32>(s0 * 0.21, 2.0, 7.0)) * 2.5 + ragged;
     let layer_id = floor(s);
     let layer_f = fract(s);
     let layer_tone = gv_hash(vec3<f32>(layer_id, 3.0, 9.0));
@@ -108,7 +146,11 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var color = mix(dark, mid, layer_tone * layer_tone);
     color = mix(color, warm, smoothstep(0.6, 0.9, gv_hash(vec3<f32>(layer_id, 5.0, 2.0))) * 0.7);
     let mottle = gv_fbm5(p * 0.33 + 9.0);
-    color = color * (0.6 + 0.8 * mottle) * (0.4 + 0.6 * seam_line);
+    // Stains and weathering in patches as large as the beds, so the eye
+    // reads rock first and stripes second.
+    let patches = gv_fbm5(p * 0.045 + 61.0);
+    color = mix(color, mid * (0.45 + 0.5 * blocks.x), 0.45 * smoothstep(0.35, 0.65, patches));
+    color = color * (0.6 + 0.8 * mottle) * (0.55 + 0.45 * seam_line) * (1.0 - 0.55 * joint);
     var rough = 1.0 - layer_hard * 0.05;
     var metal = 0.0;
 
@@ -166,10 +208,14 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var emission = vec3<f32>(0.0);
     if (seams > 0.0) {
         let district = smoothstep(0.62 - 0.3 * seams, 0.78 - 0.3 * seams, gv_fbm3(p * 0.011 + 200.0));
-        let crack_field = gv_fbm3(p * 0.045 + 300.0) - 0.5 + (gv_noise(p * 0.4) - 0.5) * 0.05;
-        let crack_w = 0.004 + 0.009 * gv_noise(p * 0.07 + 9.0);
-        let crack = (1.0 - smoothstep(crack_w * 0.4, crack_w, abs(crack_field))) * district;
-        let halo = (1.0 - smoothstep(0.0, crack_w * 5.0, abs(crack_field))) * district;
+        // The stone shows along fractures: a net of straight breaks between
+        // blocks, some open wide, many closed.
+        let net = gv_cells(p * 0.05 + 300.0 + (gv_fbm3(p * 0.12) - 0.5) * 0.35);
+        let open_here = smoothstep(0.35, 0.75, gv_noise(p * 0.035 + 9.0));
+        let crack_field = net.y + (gv_noise(p * 0.9) - 0.5) * 0.012;
+        let crack_w = (0.006 + 0.022 * gv_noise(p * 0.07 + 9.0)) * open_here;
+        let crack = (1.0 - smoothstep(crack_w * 0.4, crack_w, abs(crack_field))) * district * step(0.001, crack_w);
+        let halo = (1.0 - smoothstep(0.0, crack_w * 5.0 + 0.001, abs(crack_field))) * district * open_here;
         // Field lines: level curves of a smooth field, drifting slowly.
         let lines_field = gv_fbm3(p * 0.55 + vec3<f32>(0.0, m.time * 0.02, 0.0));
         let lines = pow(0.5 + 0.5 * sin(lines_field * 30.0 + m.time * 0.35), 6.0);
@@ -232,11 +278,16 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 
     // Folded strata in broad bands, as on the near rock (L7, L9).
     let fold = gv_fbm3(p * 0.0013 + 7.0);
-    let layer = dot(p, vec3<f32>(0.31, 0.52, 0.80)) * 0.011 + fold * 9.0;
+    // Broken into great blocks that have slipped against each other.
+    let blocks = gv_cells(p * vec3<f32>(0.0031, 0.0022, 0.0027) + (fold - 0.5) * 0.4);
+    let joint = 1.0 - smoothstep(0.0, 0.03, blocks.y);
+    let layer = dot(p, vec3<f32>(0.31, 0.52, 0.80)) * 0.011 + fold * 2.2 + (blocks.x - 0.5) * 2.4
+        + (gv_noise(p * 0.03) - 0.5) * 0.12;
     let band = gv_noise(vec3<f32>(layer * 2.3, 1.7, 4.2));
     let fine = gv_noise(vec3<f32>(layer * 11.0, 3.1, 0.4));
     let mottle = gv_fbm5(p * 0.006 + 19.0);
-    var tone = 0.05 + 0.2 * band * band + 0.05 * fine + 0.05 * mottle;
+    var tone = 0.06 + 0.13 * band * band + 0.04 * fine + 0.09 * mottle + 0.05 * blocks.x;
+    tone = tone * (1.0 - 0.5 * joint);
     // Bays lie in their own shade, buttresses stand in the light.
     let wall = step(m.uv.y, 0.5);
     tone = tone * mix(1.0, 0.5 + 0.75 * m.uv.x, wall);
@@ -255,7 +306,8 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 
     // Lodestone veins showing through as long amber seams (L2).
     let district = smoothstep(0.5, 0.72, gv_fbm3(p * 0.0009 + 200.0));
-    let seam = 1.0 - smoothstep(0.0, 0.012, abs(gv_fbm3(p * 0.0031 + 300.0) - 0.5));
+    let net = gv_cells(p * 0.0042 + 300.0 + (fold - 0.5) * 0.3);
+    let seam = (1.0 - smoothstep(0.0, 0.03, net.y)) * smoothstep(0.4, 0.7, gv_noise(p * 0.0028 + 9.0));
     let pulse = 0.75 + 0.25 * sin(m.time * 0.4 + gv_noise(p * 0.002) * 12.0);
     emission = emission + vec3<f32>(1.0, 0.36, 0.04) * seam * district * 0.9 * pulse;
 

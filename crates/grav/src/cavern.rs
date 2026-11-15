@@ -158,19 +158,6 @@ impl Cavern {
         (self.noise.fbm3(p, octaves, 2.03, 0.5) * 0.5 + 0.5).clamp(0.0, 1.0)
     }
 
-    fn ridged(&self, p: Vec3, octaves: u32) -> f32 {
-        let (mut sum, mut amp, mut freq, mut norm) = (0.0, 0.5, 1.0, 0.0);
-        for i in 0..octaves {
-            let n = self.noise.sample3(p * freq + Vec3::splat(i as f32 * 19.7));
-            let r = 1.0 - n.abs().min(1.0);
-            sum += r * r * amp;
-            norm += amp;
-            amp *= 0.5;
-            freq *= 2.1;
-        }
-        sum / norm
-    }
-
     /// The wall's surface in direction `dir` (unit) from the heart.
     pub fn wall_point(&self, dir: Vec3) -> Vec3 {
         self.wall(dir).0
@@ -195,14 +182,10 @@ impl Cavern {
         // Vaults and bays kilometres wide, buttresses, ribs, ledges: all of
         // it into the hollow or back from it.
         let vaults = (self.fbm(on / 3100.0, 4) - 0.5) * 1500.0;
-        let buttresses = (self.ridged(on / 900.0 + Vec3::splat(13.0), 4) - 0.35) * 420.0;
-        let ribs = (self.ridged(on / 210.0 + Vec3::splat(47.0), 3) - 0.3) * 70.0;
-        let ledges = {
-            let s = self.fbm(on / 1300.0 + Vec3::splat(71.0), 3) * 14.0;
-            let f = s - s.floor();
-            (smooth(0.0, 0.8, f) - smooth(0.8, 1.0, f)) * 60.0
-        };
-        let inward = (vaults + buttresses + ribs + ledges) * (1.0 - calm);
+        // On them the rock is broken as rock breaks, at the size of the
+        // wall: benches and cliffs hundreds of metres high, great blocks.
+        let broken = rock::shared().broken(on, 12.0) * 1.2;
+        let inward = (vaults + broken) * (1.0 - calm);
         let flat = Vec3::new(plain.x, plain.y, WALL_Z - BEHIND_HOME_WALL);
         let at = plain.lerp(flat, home) - dir * inward;
         (at, ((inward + 500.0) / 1300.0).clamp(0.0, 1.0))
@@ -308,8 +291,7 @@ impl Cavern {
 
     fn spire_job(spire: Spire) -> Job {
         Box::new(move || {
-            let noise = Noise::new(spire.seed);
-            let fbm = |p: Vec3, octaves: u32| noise.fbm3(p, octaves, 2.03, 0.5) * 0.5 + 0.5;
+            let shift = Vec3::splat(spire.seed as f32 * 313.7);
             let side = spire.axis.any_orthonormal_vector();
             let up = spire.axis.cross(side);
             // Features keep their size in metres on every spire.
@@ -321,17 +303,9 @@ impl Cavern {
                 let on = (ring * spire.radius + spire.axis * (s * spire.length)) / k.max(0.4);
                 let taper = 1.0 - s.powf(1.45);
                 let flare = (1.0 - smooth(0.0, 0.2, s)).powi(2) * 1.3;
-                let mass = (fbm(on * 0.006, 4) - 0.45) * 0.6;
-                let flutes = ((theta * 8.0 + fbm(on * 0.005, 2) * 6.0)
-                    .sin()
-                    .abs()
-                    .powf(0.6)
-                    - 0.6)
-                    * 0.1;
-                let shelf = (s * spire.length / k.max(0.4) + fbm(on * 0.004, 3) * 240.0) / 55.0;
-                let f = shelf - shelf.floor();
-                let shelves = (smooth(0.0, 0.8, f) - smooth(0.8, 1.0, f)) * 0.11;
-                let rough = (mass + flutes + shelves) * (0.25 + 0.75 * taper);
+                let rough = rock::shared().broken(on * k.max(0.4) + shift, spire.radius / 50.0)
+                    / spire.radius
+                    * (0.25 + 0.75 * taper);
                 let r = spire.radius * (taper + flare + rough).max(0.0);
                 spire.root + spire.axis * (s * spire.length) + ring * r
             };
