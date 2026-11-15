@@ -16,12 +16,24 @@ struct View {
     eye: Vec3,
     target: Vec3,
     up: Vec3,
+    /// A long lens, for a close look at something far away.
+    zoom: bool,
+}
+
+impl View {
+    fn zoomed(mut self) -> Self {
+        self.zoom = true;
+        self
+    }
 }
 
 pub struct Tour {
     views: Vec<View>,
     frame: u32,
     first: usize,
+    /// The game's own lens (field of view, near plane), kept for the views
+    /// that do not zoom.
+    lens: Option<(f32, f32)>,
 }
 
 impl Tour {
@@ -31,6 +43,7 @@ impl Tour {
             views: views(),
             frame: 0,
             first: first.saturating_sub(1),
+            lens: None,
         })
     }
 
@@ -38,6 +51,11 @@ impl Tour {
     pub fn frame(&mut self, world: &mut World) {
         let index = (self.first + (self.frame / HOLD) as usize) % self.views.len();
         let v = &self.views[index];
+        let camera = world.camera();
+        let lens = *self
+            .lens
+            .get_or_insert((camera.fov_y_degrees(), camera.near()));
+        world.set_camera_lens(if v.zoom { 16.0 } else { lens.0 }, lens.1);
         world.look_at_up(v.eye, v.target, v.up);
         world.report("tour_view", v.name);
         self.frame += 1;
@@ -61,66 +79,85 @@ fn views() -> Vec<View> {
             eye: street + up * 1.7,
             target: street + up * 4.0 + Vec3::Z * 60.0,
             up,
+            zoom: false,
         },
         View {
             name: "rock close up, street",
             eye: street + up * 1.5 + Vec3::X * 2.0,
             target: street + Vec3::Z * 4.0,
             up,
+            zoom: false,
         },
         View {
             name: "rock close up, wild side",
             eye: side + side_up * 3.0,
             target: side + Vec3::Z * 6.0 - side_up * 1.0,
             up: side_up,
+            zoom: false,
         },
         View {
             name: "along the spire to the tip",
             eye: crag + crag_up * 14.0,
             target: Vec3::new(0.0, 0.0, rock_tip()),
             up: crag_up,
+            zoom: false,
         },
         View {
             name: "vista: spire and cavern from outside",
             eye: Vec3::new(260.0, 190.0, 330.0),
             target: Vec3::new(0.0, 20.0, -40.0),
             up: Vec3::Y,
+            zoom: false,
         },
         View {
             name: "vista: from the wall along the spire",
             eye: wall + wall_up * 12.0 + Vec3::Y * 60.0,
             target: Vec3::new(0.0, 60.0, 200.0),
             up: Vec3::Y,
+            zoom: false,
         },
         View {
             name: "island",
             eye: isle + Vec3::new(30.0, 6.0, 40.0),
             target: space::ISLAND_CENTER,
             up: Vec3::Y,
+            zoom: false,
         },
         View {
             name: "the heart",
             eye: street + up * 30.0,
             target: street + up * 30.0 + heart * 100.0,
             up,
+            zoom: false,
         },
+        View {
+            name: "the heart, close",
+            eye: street + up * 30.0,
+            target: street + up * 30.0 + heart * 100.0,
+            up,
+            zoom: false,
+        }
+        .zoomed(),
         View {
             name: "street from above",
             eye: street + up * 150.0 + Vec3::Z * 40.0,
             target: street + Vec3::Z * 40.0,
             up: Vec3::Z,
+            zoom: false,
         },
         View {
             name: "street in profile",
             eye: street + Vec3::X * 16.0 + up * 0.2 + Vec3::Z * 15.0,
             target: street + up * 0.2 + Vec3::Z * 15.0,
             up,
+            zoom: false,
         },
         View {
             name: "wall close up",
             eye: wall + wall_up * 2.0,
             target: wall + Vec3::new(8.0, 3.0, 0.0),
             up: wall_up,
+            zoom: false,
         },
     ]
 }

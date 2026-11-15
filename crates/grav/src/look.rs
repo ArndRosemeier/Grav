@@ -22,7 +22,7 @@ const HEART_LIGHT: Vec3 = Vec3::new(0.72, 0.84, 1.0);
 const HEART_SHOWN_AT: f32 = 1700.0;
 /// The radius of the heart's core there. With its spines the body spans
 /// far more of the sky than one view holds.
-const HEART_CORE: f32 = 340.0;
+const HEART_CORE: f32 = 450.0;
 
 /// Shared WGSL: hash, value noise, fbm.
 const NOISE: &str = r#"
@@ -202,54 +202,13 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 }
 "#;
 
-/// The heart: repelling lodestone, glowing in patches that wander and pulse
-/// each on its own (design doc H3, H4), with field lines in its light (L2).
-///
-/// params[0].x: brightness.
-const HEART: &str = r#"
-fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
-    var o = base;
-    let d = normalize(m.object_pos);
-    let t = m.time;
-    // Bright patches wander slowly over the surface.
-    let drift = vec3<f32>(t * 0.011, t * 0.007, -t * 0.009);
-    let patches = gv_fbm5(d * 2.4 + drift);
-    let cells = gv_fbm3(d * 6.0 - drift * 1.7);
-    // Every region pulses on its own clock: never one uniform beat.
-    let region = floor(d * 2.2 + 0.5);
-    let phase = gv_hash(region) * 40.0;
-    let local_pulse = 0.5 + 0.5 * sin(t * (0.25 + 0.4 * gv_hash(region + 3.0)) + phase + patches * 9.0);
-    // Light breaks out along veins between darker plates.
-    let veins = max(
-        1.0 - smoothstep(0.0, 0.09, abs(gv_fbm5(d * 3.6 + drift * 0.6) - 0.5) * 2.0),
-        (1.0 - smoothstep(0.0, 0.07, abs(gv_fbm5(d * 8.5 - drift) - 0.5) * 2.0)) * 0.6,
-    );
-    let bright = smoothstep(0.42, 0.75, patches) * (0.35 + 0.65 * local_pulse);
-    // Field lines: fine level curves, drifting.
-    let lines = pow(0.5 + 0.5 * sin((cells + patches * 0.6) * 38.0 + t * 0.2), 5.0);
-    let deep = vec3<f32>(0.02, 0.07, 0.34);
-    let mid = vec3<f32>(0.16, 0.42, 1.00);
-    let hot = vec3<f32>(0.78, 0.92, 1.00);
-    var glow = mix(deep, mid, smoothstep(0.25, 0.6, patches) + veins * 0.6);
-    glow = mix(glow, hot, clamp(bright + veins * local_pulse * 0.7, 0.0, 1.0));
-    let limb = pow(abs(dot(d, normalize(m.view_dir))), 0.5);
-    let energy = (0.05 + 0.55 * bright + 2.4 * veins * (0.25 + local_pulse) + 0.4 * lines * bright)
-        * (0.3 + 0.7 * limb);
-    o.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    o.roughness = 1.0;
-    o.metallic = 0.0;
-    o.emission = glow * energy * m.params[0].x;
-    return o;
-}
-"#;
-
 /// The materials and the heart's body, made once.
 pub struct Look {
     spire: CustomMaterialId,
     wall: CustomMaterialId,
     island: CustomMaterialId,
     far: CustomMaterialId,
-    heart: [EntityId; 2],
+    heart: EntityId,
     heart_dir: Vec3,
 }
 
@@ -268,25 +227,15 @@ impl Look {
         let wall = world.add_material(stone("dead stone, wall", 1.0, 0.35, 1.0))?;
         let island = world.add_material(stone("dead stone, island", 1.0, 0.6, 0.9))?;
         let far = world.add_material(stone("dead stone, far", 0.5, 0.7, 1.4))?;
-        // The core between the blades: dark stone with its own slow veins,
-        // no brighter than the crystals around it.
-        let core_material = world.add_material(
-            CustomMaterial::new("heart core", format!("{NOISE}{HEART}"))
-                .param(0, [1.6, 0.0, 0.0, 0.0]),
-        )?;
-        let core = world.spawn(Mesh::ball(Vec3::ZERO, 0.7, rgb(255, 255, 255))?);
-        world.set_custom_material(core, core_material)?;
         let blade_material = world.add_material(
             CustomMaterial::new("heart blades", format!("{NOISE}{}", heart::BLADES))
                 .param(0, [9.0, HEART_CORE, 0.0, 0.0]),
         )?;
         let blades = world.spawn(heart::body()?);
         world.set_custom_material(blades, blade_material)?;
-        let heart = [core, blades];
-        for id in heart {
-            world.set_place(id, heart_place(heart_dir * HEART_SHOWN_AT))?;
-            world.set_casts_shadow(id, false)?;
-        }
+        let heart = blades;
+        world.set_place(heart, heart_place(heart_dir * HEART_SHOWN_AT))?;
+        world.set_casts_shadow(heart, false)?;
         Ok(Self {
             spire,
             wall,
@@ -334,6 +283,7 @@ impl Look {
             raymarch_height: false,
             ..ShadowSettings::default()
         }));
+        world.set_bloom(BloomSettings::default().with_intensity(0.55)?);
         world.set_tone_map(ToneMap::Agx);
         Ok(())
     }
@@ -341,10 +291,10 @@ impl Look {
     /// Every frame: the heart is so far away that it does not shift as the
     /// camera moves, so its stand-in keeps its distance from the camera.
     pub fn follow_camera(&self, world: &mut World, camera: Vec3) -> EngineResult<()> {
-        for id in self.heart {
-            world.set_place(id, heart_place(camera + self.heart_dir * HEART_SHOWN_AT))?;
-        }
-        Ok(())
+        world.set_place(
+            self.heart,
+            heart_place(camera + self.heart_dir * HEART_SHOWN_AT),
+        )
     }
 }
 
