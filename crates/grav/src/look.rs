@@ -268,16 +268,17 @@ impl Look {
         let wall = world.add_material(stone("dead stone, wall", 1.0, 0.35, 1.0))?;
         let island = world.add_material(stone("dead stone, island", 1.0, 0.6, 0.9))?;
         let far = world.add_material(stone("dead stone, far", 0.5, 0.7, 1.4))?;
-        // The glowing core, seen only between the blades that hide it.
+        // The core between the blades: dark stone with its own slow veins,
+        // no brighter than the crystals around it.
         let core_material = world.add_material(
             CustomMaterial::new("heart core", format!("{NOISE}{HEART}"))
-                .param(0, [22.0, 0.0, 0.0, 0.0]),
+                .param(0, [1.6, 0.0, 0.0, 0.0]),
         )?;
         let core = world.spawn(Mesh::ball(Vec3::ZERO, 0.7, rgb(255, 255, 255))?);
         world.set_custom_material(core, core_material)?;
         let blade_material = world.add_material(
             CustomMaterial::new("heart blades", format!("{NOISE}{}", heart::BLADES))
-                .param(0, [5.0, 0.0, 0.0, 0.0]),
+                .param(0, [9.0, HEART_CORE, 0.0, 0.0]),
         )?;
         let blades = world.spawn(heart::body()?);
         world.set_custom_material(blades, blade_material)?;

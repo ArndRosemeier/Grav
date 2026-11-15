@@ -5,9 +5,10 @@
 //! its outline from ever reading as round, and a loose halo of shed shards
 //! drifts around it.
 //!
-//! The mesh is in units of the core's radius. Each point's colour carries
-//! data for the material: red is the blade's own random number (its pulse
-//! clock), green is how far along the blade the point lies (0 root, 1 tip).
+//! The mesh is in units of the core's radius. Each point's texture
+//! coordinate carries data for the material: x is the blade's own random
+//! number (its clock and pattern), y is how far along the blade the point
+//! lies (0 root, 1 tip).
 
 use engine::prelude::*;
 use std::f32::consts::TAU;
@@ -37,15 +38,14 @@ impl Rng {
     }
 }
 
-/// The data colour of a point. The engine reads colours as sRGB, so the
-/// values are stored through the inverse curve and arrive linear.
-fn data(blade: f32, along: f32) -> Color {
-    let enc = |v: f32| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8;
-    rgb(enc(blade), enc(along), 0)
+/// The data of a point, carried in its texture coordinate: x is the
+/// blade's own random number, y is how far along the blade it lies.
+fn data(blade: f32, along: f32) -> [f32; 2] {
+    [blade, along]
 }
 
 /// One triangle, turned so its front faces away from `inside`.
-fn tri(mesh: &mut Mesh, p: [Vec3; 3], c: [Color; 3], inside: Vec3) -> EngineResult<()> {
+fn tri(mesh: &mut Mesh, p: [Vec3; 3], c: [[f32; 2]; 3], inside: Vec3) -> EngineResult<()> {
     let n = (p[1] - p[0]).cross(p[2] - p[0]);
     let order = if n.dot(p[0] - inside) >= 0.0 {
         [0, 1, 2]
@@ -55,7 +55,7 @@ fn tri(mesh: &mut Mesh, p: [Vec3; 3], c: [Color; 3], inside: Vec3) -> EngineResu
     let mut ids = [None; 3];
     for (slot, &k) in ids.iter_mut().zip(&order) {
         let id = mesh.add_point(p[k])?;
-        mesh.set_point_color(id, c[k])?;
+        mesh.set_point_uv(id, c[k])?;
         *slot = Some(id);
     }
     if let [Some(a), Some(b), Some(cc)] = ids {
@@ -187,43 +187,64 @@ pub fn body() -> EngineResult<Mesh> {
     Ok(mesh)
 }
 
-/// The blades' material: dark glass, lit from the root, with light running
-/// out along each blade in lines and every blade on its own clock.
+/// The blades' material: dark glass that carries its own light. The glow is
+/// not a lamp at the centre: every blade has its own level, clock and
+/// pattern (clouds of light inside the crystal, veins, bands that travel
+/// along it, a burning tip on some), so bright and dark blades sit side by
+/// side all through the mass.
 ///
-/// params[0].x: brightness. Needs the shared noise functions before it.
+/// params[0].x: brightness. params[0].y: the entity's scale. Needs the
+/// shared noise functions before it.
 pub const BLADES: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
-    let blade = base.color.r;
-    let along = base.color.g;
+    let blade = m.uv.x;
+    let along = m.uv.y;
     let t = m.time;
+    // The engine gives the object position with the entity's scale applied:
+    // take it back to the mesh's own units (core radii).
+    let p = m.object_pos / max(m.params[0].y, 0.001);
     let n = normalize(m.normal);
     let v = normalize(m.view_dir);
-    // Each blade pulses on its own clock; neighbours in one region share a
-    // slow swell, so pulses are local, never one beat for the whole heart.
-    let region = floor(normalize(m.object_pos) * 2.3 + 0.5);
-    let swell = 0.5 + 0.5 * sin(t * (0.18 + 0.3 * gv_hash(region)) + gv_hash(region + 5.0) * 40.0);
-    let own = 0.5 + 0.5 * sin(t * (0.5 + 0.9 * blade) + blade * 53.0);
-    let pulse = swell * (0.45 + 0.55 * own);
-    // Light breaks out at the roots, between the blades.
-    let root = exp(-along * 6.0);
-    let near = exp(-along * 2.2);
-    // Field lines: bright bands running out along the blade.
-    let wobble = gv_noise(m.object_pos * 5.0 + blade * 9.0);
-    let lines = pow(0.5 + 0.5 * sin(along * (14.0 + 22.0 * blade) - t * 0.6 + wobble * 9.0 + blade * 20.0), 9.0)
-        * smoothstep(0.35, 0.65, gv_noise(m.object_pos * 2.1 + blade * 31.0));
-    // Glass: each facet catches the glow its own way, edges brightest.
+    let h1 = gv_hash(vec3<f32>(blade * 91.0, 3.0, 7.0));
+    let h2 = gv_hash(vec3<f32>(blade * 57.0, 11.0, 2.0));
+    let h3 = gv_hash(vec3<f32>(blade * 33.0, 5.0, 19.0));
+    // How alive this blade is: many are nearly dark, a few blaze. Blades in
+    // one region share a slow swell, and each has its own faster clock.
+    let region = floor(normalize(p) * 2.3 + 0.5);
+    let swell = 0.5 + 0.5 * sin(t * (0.15 + 0.25 * gv_hash(region)) + gv_hash(region + 5.0) * 40.0);
+    let own = 0.5 + 0.5 * sin(t * (0.35 + 0.8 * h2) + h1 * 50.0);
+    let level = pow(h1, 2.2) * (0.35 + 0.65 * swell) * (0.5 + 0.5 * own) + 0.03;
+
+    // Clouds of light inside the crystal, drifting slowly.
+    let q = p * (1.6 + 1.8 * h3) + vec3<f32>(blade * 40.0, t * 0.03, -t * 0.02);
+    let cloud_field = gv_fbm3(q);
+    let clouds = smoothstep(0.46, 0.70, cloud_field);
+    // Veins: thin bright filaments where the cloud field crosses a level.
+    let vein_field = gv_fbm3(p * (3.0 + 4.0 * h2) + blade * 23.0 + vec3<f32>(0.0, t * 0.015, 0.0));
+    let veins = 1.0 - smoothstep(0.0, 0.025, abs(vein_field - 0.5));
+    // Field lines: level curves inside the clouds, slowly crawling.
+    let lines = pow(0.5 + 0.5 * sin(cloud_field * 70.0 + t * 0.3), 4.0);
+    // Bands that travel along the blade, outward on some, inward on others.
+    let way = select(-1.0, 1.0, h3 > 0.4);
+    let band_phase = along * (6.0 + 16.0 * h2) - way * t * (0.25 + 0.5 * h1) + cloud_field * 4.0;
+    let bands = pow(0.5 + 0.5 * sin(band_phase), 10.0) * (0.25 + 0.75 * clouds);
+    // Some blades burn at the tip.
+    let tip = smoothstep(0.72, 1.0, along) * step(0.78, h3);
+
+    // The glass itself: nearly black blue, each facet its own depth, edges lit.
     let facet = gv_hash(floor(n * 5.0 + 0.5) + blade * 3.0);
-    let rim = pow(1.0 - abs(dot(n, v)), 2.5);
-    let deep = vec3<f32>(0.010, 0.035, 0.20);
-    let mid = vec3<f32>(0.10, 0.34, 1.00);
-    let hot = vec3<f32>(0.75, 0.90, 1.00);
-    let fade = 1.0 - smoothstep(0.55, 1.0, along);
-    var e = deep * (0.15 + 0.7 * facet) * (0.3 + 0.7 * fade);
-    e += mid * rim * (0.15 + 0.5 * pulse) * (0.4 + 0.6 * fade);
-    e += mid * near * (0.25 + 0.9 * pulse) * (0.5 + 0.5 * facet);
-    e += mix(mid, hot, pulse) * lines * (0.2 + 1.1 * pulse) * fade;
-    e += hot * root * (1.5 + 3.5 * pulse);
+    let rim = pow(1.0 - abs(dot(n, v)), 3.0);
+    let deep = vec3<f32>(0.004, 0.014, 0.085);
+    let mid = vec3<f32>(0.08, 0.30, 1.00);
+    let hot = vec3<f32>(0.72, 0.90, 1.00);
+    var e = deep * (0.3 + 1.0 * facet);
+    e += mid * rim * (0.04 + 0.6 * level);
+    e += mid * clouds * level * (1.2 + 3.0 * lines);
+    e += hot * clouds * lines * level * level * 6.0;
+    e += mix(mid, hot, 0.6) * veins * level * 5.0;
+    e += mix(mid, hot, bands) * bands * level * 6.0;
+    e += hot * tip * level * 6.0;
     o.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     o.roughness = 0.2;
     o.metallic = 0.0;
