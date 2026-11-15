@@ -49,6 +49,8 @@ pub struct Ground {
     pub up: Vec<Vec3>,
     /// Water that reaches this point is gone (it leaves this ground).
     pub drain: Vec<bool>,
+    /// A spring placed here by hand, in the unit of flow (0: none).
+    pub spring: Vec<f32>,
 }
 
 /// The water on a `Ground`, per point.
@@ -92,6 +94,7 @@ impl Ground {
             pull: vec![1.0; n],
             up: vec![Vec3::Y; n],
             drain: vec![false; n],
+            spring: vec![0.0; n],
         }
     }
 
@@ -150,7 +153,7 @@ impl Ground {
                 let p = self.at[i];
                 let spot = noise.fbm3(p * 0.021 + Vec3::splat(88.0), 3, 2.03, 0.5) * 0.5 + 0.5;
                 let spring = smooth(0.74, 0.8, spot) * SPRING;
-                (dew + spring) * areas[i]
+                (dew + spring) * areas[i] + self.spring[i]
             })
             .collect();
         // Downhill: the neighbour the potential falls to most steeply.
@@ -262,12 +265,13 @@ impl Ground {
         }
         let surface = (0..n)
             .map(|i| {
-                if pool_of[i] != none {
+                // Puddles a finger deep wet the rock but are not drawn.
+                if depth[i] > 0.05 {
                     return depth[i];
                 }
                 let beside = self
                     .neighbours(i)
-                    .filter(|&j| pool_of[j] != none)
+                    .filter(|&j| depth[j] > 0.05)
                     .map(|j| (level_of[j] - self.potential[i]) / self.pull[i].max(0.05))
                     .fold(f32::MIN, f32::max);
                 if beside > f32::MIN {

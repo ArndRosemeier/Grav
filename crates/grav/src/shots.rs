@@ -74,6 +74,9 @@ fn views() -> Vec<View> {
     let wall_up = wall_rot * Vec3::Y;
     let (road, road_rot) = space::spire_frame(0.0, -120.0);
     let road_up = road_rot * Vec3::Y;
+    let (spring, spring_rot) =
+        space::spire_frame(crate::rock::SPRING_AT.0, crate::rock::SPRING_AT.1);
+    let spring_up = spring_rot * Vec3::Y;
     let (isle, _) = space::island_frame(Vec3::new(0.6, 0.3, 0.7));
     vec![
         View {
@@ -208,6 +211,20 @@ fn views() -> Vec<View> {
             eye: street + up * 60.0,
             target: street + up * 60.0 + Vec3::new(-1.0, 0.5, 0.8) * 100.0,
             up,
+            zoom: false,
+        },
+        View {
+            name: "water: the town's spring",
+            eye: spring + spring_up * 3.2 + Vec3::new(9.0, 0.0, -8.0),
+            target: spring + spring_up * 0.3,
+            up: spring_up,
+            zoom: false,
+        },
+        View {
+            name: "water: the spring and its brook from above",
+            eye: spring + spring_up * 38.0,
+            target: spring,
+            up: Vec3::Z,
             zoom: false,
         },
         View {

@@ -42,6 +42,16 @@ const TABLE_STEP: f32 = 0.25;
 /// sinks under the wall's own rock.
 const SKIRT_FLAT: f32 = 150.0;
 const SKIRT_END: f32 = 165.0;
+/// The town's spring: where on the spire (degrees round from the top, z
+/// along it), and the size of the basin it has worn into the rock.
+pub const SPRING_AT: (f32, f32) = (16.0, -78.0);
+pub const SPRING_BASIN_RADIUS: f32 = 6.5;
+const SPRING_RADIUS_AT: f32 = SPIRE_RADIUS;
+const SPRING_BASIN_DEPTH: f32 = 1.7;
+/// What the spring gives, in the water map's unit (square metres of shaded
+/// rock): enough to keep its basin full and a brook running from it.
+const SPRING_FLOW: f32 = 3200.0;
+
 /// The ring road around the flare's foot, this far from the axis.
 const RING_ROAD: f32 = 137.0;
 
@@ -334,7 +344,17 @@ impl Rock {
         let rocky = self.relief(on, smooth(4.0, 15.0, d), smooth(15.0, 45.0, d) * flare);
         let wildness = smooth(15.0, 32.0, d) * (1.0 - flare);
         let outside = (rocky * (1.0 - wildness) + wild * wildness) * shrink;
-        (base + town * swell + (1.0 - town) * outside).max(0.15)
+        // The spring's basin: a round hollow worn into the town's ground.
+        let basin = {
+            let turn = (theta - SPRING_AT.0.to_radians() + std::f32::consts::PI).rem_euclid(TAU)
+                - std::f32::consts::PI;
+            let d = (turn * SPRING_RADIUS_AT).hypot(z - SPRING_AT.1) / SPRING_BASIN_RADIUS;
+            let bowl = (1.0 - d * d).max(0.0);
+            // A lip a hand high around it, where the water has left stone.
+            let lip = 0.12 * (1.0 - ((d - 1.05) / 0.2).powi(2)).max(0.0);
+            SPRING_BASIN_DEPTH * bowl * bowl - lip
+        };
+        (base + town * swell + (1.0 - town) * outside - basin).max(0.15)
     }
 
     /// A point on the spire's surface.
@@ -603,7 +623,23 @@ impl Rock {
                 wall.drain[i] = edge || p.truncate().length() < 156.0;
             }
         }
-        let spire_water = spire.water(heart);
+        // The town's spring rises in the middle of its basin.
+        let spring_at = self.spire_point(SPRING_AT.0.to_radians(), SPRING_AT.1);
+        let nearest = (0..spire.at.len())
+            .min_by(|&a, &b| {
+                spire.at[a]
+                    .distance_squared(spring_at)
+                    .total_cmp(&spire.at[b].distance_squared(spring_at))
+            })
+            .unwrap_or(0);
+        spire.spring[nearest] = SPRING_FLOW;
+        let mut spire_water = spire.water(heart);
+        // The basin's water is the simulated kind (water.rs), not drawn here.
+        for i in 0..spire.at.len() {
+            if spire.at[i].distance(spring_at) < SPRING_BASIN_RADIUS + 1.6 {
+                spire_water.surface[i] = -0.3;
+            }
+        }
         let wall_water = wall.water(heart);
         Waters {
             spire,
@@ -972,6 +1008,26 @@ mod tests {
         }
     }
 
+    fn near_spring(theta: f32, z: f32) -> bool {
+        let turn = (theta - SPRING_AT.0.to_radians() + std::f32::consts::PI).rem_euclid(TAU)
+            - std::f32::consts::PI;
+        (turn * SPIRE_RADIUS).hypot(z - SPRING_AT.1) < SPRING_BASIN_RADIUS * 1.4
+    }
+
+    #[test]
+    fn the_spring_basin_is_a_hollow_in_the_town() {
+        let rock = Rock::new();
+        let r = rock.spire_radius(SPRING_AT.0.to_radians(), SPRING_AT.1);
+        assert!((SPIRE_RADIUS - 1.8..SPIRE_RADIUS - 1.0).contains(&r), "{r}");
+        let w = rock.waters(space::HEART_CENTER.normalize());
+        let at = rock.spire_point(SPRING_AT.0.to_radians(), SPRING_AT.1);
+        let deepest = (0..w.spire.at.len())
+            .filter(|&i| w.spire.at[i].distance(at) < 3.0)
+            .map(|i| w.spire_water.depth[i])
+            .fold(0.0, f32::max);
+        assert!(deepest > 1.0, "the basin holds {deepest} m of water");
+    }
+
     #[test]
     fn the_town_ground_is_gentle_and_never_below_the_plain_cylinder() {
         let rock = Rock::new();
@@ -980,7 +1036,8 @@ mod tests {
                 let theta = ai as f32 / 72.0 * TAU;
                 let r = rock.spire_radius(theta, zi as f32);
                 assert!(
-                    (SPIRE_RADIUS..SPIRE_RADIUS + 1.2).contains(&r),
+                    (SPIRE_RADIUS..SPIRE_RADIUS + 1.2).contains(&r)
+                        || near_spring(theta, zi as f32),
                     "radius {r} at z {zi}"
                 );
             }
