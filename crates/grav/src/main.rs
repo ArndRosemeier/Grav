@@ -309,6 +309,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         "field is finite at the hero",
         field.acceleration(&BodyQuery::at(head)).is_finite(),
     );
+    if (0.3..0.5).contains(&frame.time) {
+        // Before the demo moves anything: the hero has landed and may walk.
+        world.check(
+            "hero stands and can walk at the start",
+            g.hero.walking_allowed,
+        );
+    }
     world.report("hero_pull_g", g.hero.pull_g);
     world.report("coating", g.inv.coating.units);
     world.report("pieces_broken", g.response.broken_total);
