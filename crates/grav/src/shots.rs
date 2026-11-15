@@ -196,6 +196,20 @@ fn views() -> Vec<View> {
             up: wall_up,
             zoom: false,
         },
+        View {
+            name: "the cavern, across from above the town",
+            eye: street + up * 60.0,
+            target: street + up * 60.0 + Vec3::new(1.0, 0.25, 0.35) * 100.0,
+            up,
+            zoom: false,
+        },
+        View {
+            name: "the cavern, the other way",
+            eye: street + up * 60.0,
+            target: street + up * 60.0 + Vec3::new(-1.0, 0.5, 0.8) * 100.0,
+            up,
+            zoom: false,
+        },
     ]
 }
 

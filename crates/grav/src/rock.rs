@@ -422,7 +422,10 @@ impl Rock {
             (smooth(0.0, 0.85, f) - smooth(0.85, 1.0, f)) * 7.0
         };
         let wild = mass + buttress + strata;
-        under + street * swell + (1.0 - street) * wild.max(-8.0)
+        let height = under + street * swell + (1.0 - street) * wild.max(-8.0);
+        // At its edge this wall sinks under the cavern's wall, which takes over.
+        let rim = smooth(740.0, 880.0, x.abs().max(y.abs()));
+        height + (-(crate::cavern::BEHIND_HOME_WALL + 10.0) - height) * rim
     }
 
     /// A point on the outer wall's surface.
@@ -715,10 +718,17 @@ pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
     for s in far_spires(heart_dir) {
         jobs.push(far_spire_job(s));
     }
+    on_workers(jobs)
+}
+
+/// Run jobs on worker threads and give their results in the jobs' order.
+pub fn on_workers<T: Send>(
+    jobs: Vec<Box<dyn FnOnce() -> EngineResult<T> + Send>>,
+) -> EngineResult<Vec<T>> {
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
-        .clamp(1, 12);
+        .clamp(1, 16);
     let total = jobs.len();
     let queue = std::sync::Mutex::new(jobs.into_iter().enumerate().collect::<Vec<_>>());
     let done = std::sync::Mutex::new(Vec::with_capacity(total));
@@ -736,11 +746,9 @@ pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
     });
     let mut done = done
         .into_inner()
-        .map_err(|_| EngineError::InvalidValue("a rock worker panicked".into()))?;
+        .map_err(|_| EngineError::InvalidValue("a worker panicked".into()))?;
     if done.len() != total {
-        return Err(EngineError::InvalidValue(
-            "a rock worker did not finish".into(),
-        ));
+        return Err(EngineError::InvalidValue("a worker did not finish".into()));
     }
     done.sort_by_key(|(i, _)| *i);
     done.into_iter().map(|(_, p)| p).collect()

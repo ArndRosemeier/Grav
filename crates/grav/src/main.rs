@@ -6,6 +6,7 @@
 //! and release to throw, V set on the surface in reach, X recover, Z recall,
 //! R hold for stone sense, P sandbox palette.
 
+mod cavern;
 mod dwarf;
 mod heart;
 mod hero;
@@ -36,7 +37,6 @@ struct Game {
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
-    look: look::Look,
     tour: Option<shots::Tour>,
     palette: bool,
     aiming_before: bool,
@@ -117,7 +117,6 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         response,
         visuals,
         waters,
-        look,
         tour,
         palette: false,
         aiming_before: false,
@@ -313,7 +312,6 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         Some(tour) => tour.frame(world),
         None => hud(g, world, frame),
     }
-    g.look.follow_camera(world, world.camera().eye())?;
 
     // --- Self-checks ---
     world.check(

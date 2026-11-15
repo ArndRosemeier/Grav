@@ -18,11 +18,9 @@ pub fn heart_direction(heart_center: Vec3) -> Vec3 {
 
 /// The heart's light: cold blue-white, the colour of repelling lodestone (L1).
 const HEART_LIGHT: Vec3 = Vec3::new(0.72, 0.84, 1.0);
-/// How far away the heart's stand-in body is drawn.
-const HEART_SHOWN_AT: f32 = 1700.0;
-/// The radius of the heart's core there. With its spines the body spans
-/// far more of the sky than one view holds.
-const HEART_CORE: f32 = 450.0;
+/// The radius of the heart's core. Its spines and shed shards reach to
+/// about 3.3 km, inside the 3 to 3.6 km the heart keeps stripped bare.
+const HEART_CORE: f32 = 900.0;
 
 /// Shared WGSL: hash, value noise, fbm.
 const NOISE: &str = r#"
@@ -202,13 +200,79 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 }
 "#;
 
+/// The rock of the cavern kilometres away: the far wall, spires and
+/// islands. The heart is in the middle of them all, so each is lit from
+/// where the heart is as seen from it, not from one direction like the
+/// near rock; the light is worked out here and given as the surface's own.
+///
+/// params[0].xyz: the heart's centre. params[0].w: light strength.
+/// uv.y: 0 wall, 1 spire (uv.x runs root to tip), 2 island.
+const CAVERN: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let p = m.world_pos;
+    let n = normalize(m.normal);
+    let to_heart = m.params[0].xyz - p;
+    let dist = length(to_heart);
+    let l = to_heart / dist;
+
+    // Folded strata in broad bands, as on the near rock (L7, L9).
+    let fold = gv_fbm3(p * 0.0013 + 7.0);
+    let layer = dot(p, vec3<f32>(0.31, 0.52, 0.80)) * 0.011 + fold * 9.0;
+    let band = gv_noise(vec3<f32>(layer * 2.3, 1.7, 4.2));
+    let fine = gv_noise(vec3<f32>(layer * 11.0, 3.1, 0.4));
+    let mottle = gv_fbm5(p * 0.006 + 19.0);
+    var tone = 0.05 + 0.2 * band * band + 0.05 * fine + 0.05 * mottle;
+    // Bays lie in their own shade, buttresses stand in the light.
+    let wall = step(m.uv.y, 0.5);
+    tone = tone * mix(1.0, 0.5 + 0.75 * m.uv.x, wall);
+    var color = vec3<f32>(0.62, 0.66, 0.78) * tone;
+    let ochre = smoothstep(0.62, 0.8, gv_noise(vec3<f32>(layer * 0.9, 8.0, 2.0)));
+    color = mix(color, vec3<f32>(0.75, 0.62, 0.42) * tone, ochre * 0.55);
+
+    // The heart's light: square on, the rock is bleached (L10); turned
+    // away it keeps a little of the glow the mist carries everywhere.
+    let facing = dot(n, l);
+    let lit = smoothstep(-0.1, 1.0, facing);
+    let reach = clamp(pow(6000.0 / dist, 1.3), 0.5, 3.5);
+    let heart_light = vec3<f32>(0.72, 0.84, 1.0) * lit * lit * reach * m.params[0].w;
+    let mist_light = vec3<f32>(0.10, 0.15, 0.26) * 0.2 * m.params[0].w;
+    var emission = color * (heart_light + mist_light);
+
+    // Lodestone veins showing through as long amber seams (L2).
+    let district = smoothstep(0.5, 0.72, gv_fbm3(p * 0.0009 + 200.0));
+    let seam = 1.0 - smoothstep(0.0, 0.012, abs(gv_fbm3(p * 0.0031 + 300.0) - 0.5));
+    let pulse = 0.75 + 0.25 * sin(m.time * 0.4 + gv_noise(p * 0.002) * 12.0);
+    emission = emission + vec3<f32>(1.0, 0.36, 0.04) * seam * district * 0.9 * pulse;
+
+    // Where people live: lamps, in towns that cling to spires and wall.
+    let spire = step(0.5, m.uv.y) * step(m.uv.y, 1.5);
+    let town = smoothstep(0.6 - 0.14 * spire, 0.74 - 0.14 * spire, gv_fbm3(p * 0.0017 + 50.0));
+    let cell = floor(p / 34.0);
+    let lamp = step(0.8, gv_hash(cell));
+    let in_cell = length(fract(p / 34.0) - vec3<f32>(0.5));
+    let glow = lamp * town * (1.0 - smoothstep(0.0, 0.17, in_cell));
+    emission = emission + vec3<f32>(1.0, 0.62, 0.28) * glow * 4.0;
+
+    o.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    o.roughness = 1.0;
+    o.metallic = 0.0;
+    o.emission = emission;
+    return o;
+}
+"#;
+
+/// How strong the heart's light is on the far rock, matched by eye to the
+/// engine's own light on the near rock.
+const CAVERN_LIGHT: f32 = 0.5;
+
 /// The materials and the heart's body, made once.
 pub struct Look {
     spire: CustomMaterialId,
     wall: CustomMaterialId,
     island: CustomMaterialId,
     far: CustomMaterialId,
-    heart: EntityId,
+    cavern: CustomMaterialId,
     heart_dir: Vec3,
 }
 
@@ -233,17 +297,30 @@ impl Look {
         )?;
         let blades = world.spawn(heart::body()?);
         world.set_custom_material(blades, blade_material)?;
-        let heart = blades;
-        world.set_place(heart, heart_place(heart_dir * HEART_SHOWN_AT))?;
-        world.set_casts_shadow(heart, false)?;
+        // The heart stands where it is, at its true size.
+        world.set_place(
+            blades,
+            Place::new(heart_center.x, heart_center.y, heart_center.z).with_scale(HEART_CORE),
+        )?;
+        world.set_casts_shadow(blades, false)?;
+        let cavern = world.add_material(
+            CustomMaterial::new("cavern rock", format!("{NOISE}{CAVERN}")).param(
+                0,
+                [heart_center.x, heart_center.y, heart_center.z, CAVERN_LIGHT],
+            ),
+        )?;
         Ok(Self {
             spire,
             wall,
             island,
             far,
-            heart,
+            cavern,
             heart_dir,
         })
+    }
+
+    pub fn cavern_material(&self) -> CustomMaterialId {
+        self.cavern
     }
 
     pub fn rock_material(&self, kind: RockKind) -> CustomMaterialId {
@@ -258,7 +335,9 @@ impl Look {
     /// Light and air: the heart as the one great light, deep cool shadow,
     /// mist that takes the heart's colour (Q5).
     pub fn light_and_air(&self, world: &mut World) -> EngineResult<()> {
-        let mist = rgb(5, 8, 17);
+        // The mist carries the heart's light through the whole hollow: far
+        // rock pales into a blue glow, it never goes black.
+        let mist = rgb(38, 52, 80);
         world.set_sky(Some(Sky {
             zenith: mist,
             horizon: mist,
@@ -272,11 +351,11 @@ impl Look {
         world.set_clear_color(mist);
         world.set_sun(self.heart_dir, 0.10);
         world.set_sun_color(HEART_LIGHT * 1.9);
-        let mut haze = Haze::new(mist, 2600.0);
+        let mut haze = Haze::new(mist, 20_000.0);
         haze.base_y = -100_000.0;
         haze.height_m = 1_000_000.0;
         world.set_haze(Some(haze));
-        world.set_view_distance(6000.0)?;
+        world.set_view_distance(16_000.0)?;
         world.set_shadows(Some(ShadowSettings {
             cascade_end_m: [18.0, 70.0, 260.0],
             map_size: 2048,
@@ -287,17 +366,4 @@ impl Look {
         world.set_tone_map(ToneMap::Agx);
         Ok(())
     }
-
-    /// Every frame: the heart is so far away that it does not shift as the
-    /// camera moves, so its stand-in keeps its distance from the camera.
-    pub fn follow_camera(&self, world: &mut World, camera: Vec3) -> EngineResult<()> {
-        world.set_place(
-            self.heart,
-            heart_place(camera + self.heart_dir * HEART_SHOWN_AT),
-        )
-    }
-}
-
-fn heart_place(p: Vec3) -> Place {
-    Place::new(p.x, p.y, p.z).with_scale(HEART_CORE)
 }
