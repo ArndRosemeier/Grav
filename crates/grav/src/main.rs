@@ -6,6 +6,7 @@
 //! and release to throw, V set on the surface in reach, X recover, Z recall,
 //! R hold for stone sense, P sandbox palette.
 
+mod dwarf;
 mod hero;
 mod link;
 mod response;
@@ -95,7 +96,10 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ))?;
     }
     let (at, _) = space::spire_frame(0.0, -75.0);
-    let hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y)?;
+    let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y)?;
+    if let Some(body) = dwarf::spawn(world) {
+        hero.set_animated_body(world, body);
+    }
     let inv = Inventory::new(world, &tuning)?;
     let response = Response::new(world, built);
     let visuals = Visuals::new(world, at)?;

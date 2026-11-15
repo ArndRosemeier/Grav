@@ -8,3 +8,8 @@ license.workspace = true
 [dependencies]
 grav-core = { path = "../grav-core" }
 engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
+# The hero's body (an Actors dwarf). Its packs are not in the repo:
+# `python tools/get_packs.py` puts them in assets/packs.
+actors-engine = { git = "https://github.com/ArndRosemeier/Actors" }
+actors-generator = { git = "https://github.com/ArndRosemeier/Actors" }
+actors-human = { git = "https://github.com/ArndRosemeier/Actors" }

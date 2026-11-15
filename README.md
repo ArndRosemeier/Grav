@@ -13,13 +13,18 @@ code (A1, S9, W3, P6 ...) refer to it.
 |---|---|
 | `crates/grav-core` | The rules as plain data: attraction field (veins, heart, stones; six profiles, cutoff, inner ramp, shielding, lodestone charge rules), stones and coating, building bonds, the hero's body rules, and `Tuning` (every number, loadable from JSON). No engine, deterministic, so a server can own it later. |
 | `crates/grav` | The sandbox: one spire of dead stone out of the outer wall (middle band around the spire, heavy wall face, a seam at the root, a light island above the tip, void between), bonded houses, stalls and loose goods, water (a pool beside the start and a lake hanging under the island, Engine 3D fluid boxes that follow the field, stones included), the hero, the stone verbs, dust, stone sense and the placing preview. |
+| `tools/get_packs.py` | Downloads the Actors packs (bodies, clothes, clips) into `assets/packs` (git-ignored) for the dwarf hero. |
 | `tools/verify.py` | Runs the game as an Engine verify run (a scripted demo, screenshots, report) into `target/verify/grav/`. |
 
 ## Play
 
 ```bash
+python tools/get_packs.py   # once: the Actors packs (about 450 MB) into assets/packs
 cargo run --release -p grav
 ```
+
+With the packs the hero is an Actors dwarf that idles, walks and runs;
+without them a block figure stands in (`GRAV_PACKS` points elsewhere).
 
 WASD walk, Q/E turn (or the mouse with the right button held), Space jump
 (push off while drifting), 1-9 pick a stone, F hold to open, C hold to close

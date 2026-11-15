@@ -9,6 +9,8 @@ use grav_core::{can_walk, fall_damage, jump_speed, Movement, G};
 pub struct Hero {
     pub id: EntityId,
     body: EntityId,
+    /// The clip the body plays, when it is an animated dwarf.
+    clip: Option<&'static str>,
     /// Facing, kept across the hero's up as down turns.
     pub heading: Vec3,
     /// The camera's up, smoothed towards the body's up (P3).
@@ -58,6 +60,7 @@ impl Hero {
         Ok(Self {
             id,
             body,
+            clip: None,
             heading,
             cam_up: up,
             health: 100.0,
@@ -67,6 +70,14 @@ impl Hero {
             drifting: false,
             walking_allowed: false,
         })
+    }
+
+    /// Draw the hero as an animated model (the Actors dwarf) instead of
+    /// the block figure.
+    pub fn set_animated_body(&mut self, world: &mut World, body: EntityId) {
+        world.despawn(self.body);
+        self.body = body;
+        self.clip = Some("idle");
     }
 
     pub fn state(&self, world: &World) -> CharacterState {
@@ -173,6 +184,24 @@ impl Hero {
         let rot = Quat::from_mat3(&Mat3::from_cols(x, up, z));
         let feet = self.feet(world);
         world.set_place(self.body, place(feet, rot))?;
+        if let Some(clip) = self.clip {
+            // Idle, walk or run by the speed across the surface.
+            let speed = (s.velocity - up * s.velocity.dot(up)).length();
+            let want = if !s.grounded || speed < 0.4 {
+                "idle"
+            } else if speed < 3.5 {
+                "walk"
+            } else {
+                "run"
+            };
+            if want != clip {
+                // A pack without a run clip walks faster instead.
+                if world.play_animation(self.body, want).is_err() {
+                    world.play_animation(self.body, "walk")?;
+                }
+                self.clip = Some(want);
+            }
+        }
         world.look_follow_entity_up(self.id, self.cam_up, self.heading, 5.5, 2.2)?;
         Ok(())
     }
