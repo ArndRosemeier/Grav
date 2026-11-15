@@ -10,6 +10,8 @@
 //! - the island above the tip: light band, 0.4 g;
 //! - the open cavern between: only the heart's push (R3).
 
+use crate::look::Look;
+use crate::rock;
 use engine::glam::{EulerRot, Mat3};
 use engine::prelude::*;
 use grav_core::{BondClass, Field, Heart, PieceId, Structure, Tuning, Vein, VeinShape};
@@ -23,10 +25,10 @@ pub const WALL_Z: f32 = -250.0;
 pub const ISLAND_CENTER: Vec3 = Vec3::new(0.0, 210.0, 170.0);
 pub const ISLAND_RADIUS: f32 = 25.0;
 
-/// The rock colour of dead stone.
-fn dead_stone() -> Color {
-    rgb(92, 88, 96)
-}
+/// The heart's centre: six kilometres inward along the way the spire grows,
+/// well above it and a little to one side, so its light rakes down the
+/// town's street and the island's shadow falls beside the town, not on it.
+pub const HEART_CENTER: Vec3 = Vec3::new(1500.0, 2700.0, 5200.0);
 
 /// Veins and heart for this space.
 pub fn base_field() -> Field {
@@ -62,7 +64,7 @@ pub fn base_field() -> Field {
     Field {
         veins: vec![spire, wall, island],
         heart: Some(Heart {
-            center: Vec3::new(0.0, 6000.0, 0.0),
+            center: HEART_CENTER,
             stripped_radius: 3000.0,
             wall_radius: 9000.0,
             push_at_stripped: 0.3,
@@ -82,43 +84,17 @@ pub fn place(at: Vec3, rot: Quat) -> Place {
         .with_roll_deg(roll.to_degrees())
 }
 
-/// The dead stone: spire, its tip, the outer wall and the island rock.
-pub fn build_rock(world: &mut World) -> EngineResult<()> {
-    let length = SPIRE_END - SPIRE_START;
-    let mid = (SPIRE_END + SPIRE_START) * 0.5;
-    let spire = world.spawn(Shape::cylinder(
-        (0.0, 0.0, 0.0),
-        Vec3::Z,
-        SPIRE_RADIUS,
-        length,
-        64,
-        dead_stone(),
-    )?);
-    world.set_place(spire, Place::new(0.0, 0.0, mid))?;
-    world.add_body(spire, Body::fixed().shape(BodyShape::Mesh))?;
-    let tip = world.spawn(Shape::ball((0.0, 0.0, 0.0), SPIRE_RADIUS, dead_stone())?);
-    world.set_place(tip, Place::new(0.0, 0.0, SPIRE_END))?;
-    world.add_body(tip, Body::fixed().shape(BodyShape::Ball(SPIRE_RADIUS)))?;
-    let wall = world.spawn(Shape::box_at(
-        (0.0, 0.0, 0.0),
-        (800.0, 800.0, 20.0),
-        rgb(70, 66, 74),
-    )?);
-    world.set_place(wall, Place::new(0.0, 0.0, WALL_Z - 10.0))?;
-    world.add_body(
-        wall,
-        Body::fixed().shape(BodyShape::Box(Vec3::new(400.0, 400.0, 10.0))),
-    )?;
-    let island = world.spawn(Shape::ball(
-        (0.0, 0.0, 0.0),
-        ISLAND_RADIUS,
-        rgb(84, 92, 80),
-    )?);
-    world.set_place(
-        island,
-        Place::new(ISLAND_CENTER.x, ISLAND_CENTER.y, ISLAND_CENTER.z),
-    )?;
-    world.add_body(island, Body::fixed().shape(BodyShape::Ball(ISLAND_RADIUS)))?;
+/// The dead stone: spire, outer wall, island and the far spires, each with
+/// its solid shape from the same mesh that is drawn.
+pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
+    let heart_dir = HEART_CENTER.normalize();
+    for piece in rock::build_all(rock::shared(), heart_dir)? {
+        let id = world.spawn_prepared(piece.mesh);
+        world.set_custom_material(id, look.rock_material(piece.kind))?;
+        if piece.solid {
+            world.add_body(id, Body::fixed().shape(BodyShape::Mesh))?;
+        }
+    }
     Ok(())
 }
 
@@ -127,7 +103,7 @@ pub fn build_rock(world: &mut World) -> EngineResult<()> {
 pub fn spire_frame(angle_deg: f32, z: f32) -> (Vec3, Quat) {
     let a = angle_deg.to_radians();
     let up = Vec3::new(a.sin(), a.cos(), 0.0);
-    let at = up * SPIRE_RADIUS + Vec3::Z * z;
+    let at = rock::shared().spire_point(a, z);
     // Local +z stays along the spire, local +y is up.
     let x = up.cross(Vec3::Z);
     let rot = Quat::from_mat3(&Mat3::from_cols(x, up, Vec3::Z));
@@ -137,14 +113,14 @@ pub fn spire_frame(angle_deg: f32, z: f32) -> (Vec3, Quat) {
 /// A frame on the outer wall's face at (x, y): +y points away from the wall.
 pub fn wall_frame(x: f32, y: f32) -> (Vec3, Quat) {
     let rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-    (Vec3::new(x, y, WALL_Z), rot)
+    (rock::shared().wall_point(x, y), rot)
 }
 
 /// A frame on the island's surface in direction `dir` from its centre.
 pub fn island_frame(dir: Vec3) -> (Vec3, Quat) {
     let up = dir.normalize();
     (
-        ISLAND_CENTER + up * ISLAND_RADIUS,
+        rock::shared().island_point(up),
         Quat::from_rotation_arc(Vec3::Y, up),
     )
 }

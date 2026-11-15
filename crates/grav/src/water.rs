@@ -109,11 +109,8 @@ fn build_basin(world: &mut World, plan: &Plan, rock: impl Fn(Vec3) -> bool) -> E
 pub fn build(world: &mut World) -> EngineResult<Waters> {
     // A pool on the spire a little to the side of where the hero starts.
     let (at, rot) = space::spire_frame(16.0, -78.0);
-    let spire_rock = |p: Vec3| {
-        Vec2::new(p.x, p.y).length() < space::SPIRE_RADIUS
-            && p.z > space::SPIRE_START
-            && p.z < space::SPIRE_END
-    };
+    // The basin's floor is the real rock (what is drawn is what holds water).
+    let spire_rock = |p: Vec3| crate::rock::shared().in_spire(p);
     let pool = build_basin(
         world,
         &Plan {
@@ -129,7 +126,7 @@ pub fn build(world: &mut World) -> EngineResult<Waters> {
     )?;
     // The hanging lake: under the island, held up by its vein.
     let (at, rot) = space::island_frame(Vec3::NEG_Y);
-    let island_rock = |p: Vec3| p.distance(space::ISLAND_CENTER) < space::ISLAND_RADIUS;
+    let island_rock = |p: Vec3| crate::rock::shared().in_island(p);
     let lake = build_basin(
         world,
         &Plan {

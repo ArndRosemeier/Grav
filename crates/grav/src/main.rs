@@ -9,14 +9,16 @@
 mod dwarf;
 mod hero;
 mod link;
+mod look;
 mod response;
+mod rock;
+mod shots;
 mod space;
 mod stones;
 mod visuals;
 mod water;
 
 use engine::egui;
-use engine::glam::Vec2;
 use engine::prelude::*;
 use grav_core::{BodyQuery, Charge, LodestoneBody, Placement, Profile, Tuning, G};
 use hero::{Hero, HeroInput};
@@ -33,6 +35,8 @@ struct Game {
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
+    look: look::Look,
+    tour: Option<shots::Tour>,
     palette: bool,
     aiming_before: bool,
     demo: Option<Demo>,
@@ -63,20 +67,13 @@ fn load_tuning() -> Tuning {
 
 fn setup(world: &mut World) -> EngineResult<Game> {
     let tuning = load_tuning();
-    world.set_clear_color(rgb(14, 13, 20));
-    // The heart is overhead here: light comes from it.
-    world.set_sun((0.15, 1.0, 0.1), 0.35);
-    world.set_sun_color(Vec3::new(1.0, 0.9, 0.78));
-    let mut haze = Haze::new(rgb(26, 24, 34), 700.0);
-    haze.base_y = -10_000.0;
-    haze.height_m = 100_000.0;
-    world.set_haze(Some(haze));
-    world.set_view_distance(1500.0)?;
+    let look = look::Look::new(world, space::HEART_CENTER)?;
+    look.light_and_air(world)?;
     world.set_physics_settings(PhysicsSettings {
         ground: PhysicsGround::None,
         ..PhysicsSettings::default()
     })?;
-    space::build_rock(world)?;
+    space::build_rock(world, &look)?;
     let base = space::base_field();
     let built = space::build_town(world, &tuning, &base)?;
     // Warm windows: a few lamps in the street.
@@ -108,7 +105,9 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let visuals = Visuals::new(world, at)?;
     let waters = water::build(world)?;
     link::install(world, &base, HashMap::new());
-    let demo = std::env::var("ENGINE_VERIFY").is_ok().then(Demo::default);
+    let tour = shots::Tour::from_env();
+    // The scripted run opens stones; the screenshot tour wants the world alone.
+    let demo = (std::env::var("ENGINE_VERIFY").is_ok() && tour.is_none()).then(Demo::default);
     Ok(Game {
         tuning,
         base,
@@ -117,6 +116,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         response,
         visuals,
         waters,
+        look,
+        tour,
         palette: false,
         aiming_before: false,
         demo,
@@ -301,13 +302,16 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.inv.draw(world, hand, aiming || opening_keys)?;
 
     // --- HUD ---
-    hud(g, world, frame);
+    match g.tour.as_mut() {
+        Some(tour) => tour.frame(world),
+        None => hud(g, world, frame),
+    }
+    g.look.follow_camera(world, world.camera().eye())?;
 
     // --- Self-checks ---
-    let r = Vec2::new(feet.x, feet.y).length();
     world.check(
         "hero is outside the spire's rock",
-        feet.z < space::WALL_Z + 0.5 || r > space::SPIRE_RADIUS - 0.5 || feet.z > space::SPIRE_END,
+        !rock::shared().in_spire(feet + g.hero.cam_up * 0.6),
     );
     world.check(
         "field is finite at the hero",

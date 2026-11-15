@@ -49,3 +49,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 python tools/verify.py grav --frames 600 --shots 60,150,420,560
 ```
+
+A screenshot tour of the world (no hero camera, no HUD; a new view every 12 frames):
+
+```bash
+GRAV_TOUR=1 python tools/verify.py grav --frames 132 --shots 10,22,34,46,58,70,82,94,106,118
+```
