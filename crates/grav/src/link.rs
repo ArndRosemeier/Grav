@@ -17,7 +17,10 @@ impl GravityField for FieldLink {
             id: probe.id,
             position: probe.position,
             mass: probe.mass,
-            lodestone: self.lodestone.get(&probe.id).copied(),
+            // Water probes carry a fluid's number, not an entity's.
+            lodestone: (probe.kind != FieldBody::Water)
+                .then(|| self.lodestone.get(&probe.id).copied())
+                .flatten(),
         })
     }
 }

@@ -12,6 +12,7 @@ mod response;
 mod space;
 mod stones;
 mod visuals;
+mod water;
 
 use engine::egui;
 use engine::glam::Vec2;
@@ -30,6 +31,7 @@ struct Game {
     inv: Inventory,
     response: Response,
     visuals: Visuals,
+    waters: water::Waters,
     palette: bool,
     aiming_before: bool,
     demo: Option<Demo>,
@@ -42,6 +44,7 @@ struct Demo {
     step: u32,
     coating_before: f32,
     broken_open: usize,
+    pool_start: Vec3,
 }
 
 fn load_tuning() -> Tuning {
@@ -96,6 +99,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let inv = Inventory::new(world, &tuning)?;
     let response = Response::new(world, built);
     let visuals = Visuals::new(world, at)?;
+    let waters = water::build(world)?;
     link::install(world, &base, HashMap::new());
     let demo = std::env::var("ENGINE_VERIFY").is_ok().then(Demo::default);
     Ok(Game {
@@ -105,6 +109,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         inv,
         response,
         visuals,
+        waters,
         palette: false,
         aiming_before: false,
         demo,
@@ -194,7 +199,15 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.palette = !g.palette;
     }
     if let Some(demo) = g.demo.as_mut() {
-        run_demo(demo, g.hero.id, &mut g.inv, &g.response, world, frame)?;
+        run_demo(
+            demo,
+            g.hero.id,
+            &mut g.inv,
+            &g.response,
+            &g.waters,
+            world,
+            frame,
+        )?;
         keys = HeroInput::default();
     }
     g.inv.tick(world, dt);
@@ -236,6 +249,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
 
     g.hero.update(world, keys, &g.tuning.movement, dt)?;
     g.response.step(world, &field, feet, dt)?;
+    g.waters.update(world, feet)?;
 
     // --- Field visuals ---
     g.visuals.dust(world, &field, head, dt)?;
@@ -294,6 +308,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("hero_pull_g", g.hero.pull_g);
     world.report("coating", g.inv.coating.units);
     world.report("pieces_broken", g.response.broken_total);
+    world.report("water_m3", g.waters.volume(world));
     Ok(())
 }
 
@@ -462,6 +477,7 @@ fn run_demo(
     hero: EntityId,
     inv: &mut Inventory,
     response: &Response,
+    waters: &water::Waters,
     world: &mut World,
     frame: &Frame,
 ) -> EngineResult<()> {
@@ -514,6 +530,38 @@ fn run_demo(
                 s.grounded || s.gravity.length() > 0.5 * G,
             );
             demo.step = 4;
+        }
+        4 if t > 4.5 => {
+            // Hang the second stone over the pool and open it: the water
+            // rises to it.
+            let pool = &waters.pool;
+            let above = pool.at + pool.rot * Vec3::new(0.0, 3.5, 0.0);
+            demo.pool_start = world
+                .fluid(pool.fluid)
+                .and_then(|f| f.center())
+                .unwrap_or(pool.at);
+            inv.stones[1].placement = Placement::Set {
+                at: above,
+                axis: pool.rot * Vec3::NEG_Y,
+                on: None,
+            };
+            inv.stones[1].open_to(1.0);
+            // Walk over to watch (the demo teleports).
+            let (near, _) = space::spire_frame(16.0, -88.0);
+            world.set_place(hero, Place::new(near.x, near.y + 0.05, near.z))?;
+            demo.step = 5;
+        }
+        5 if t > 7.0 => {
+            let pool = &waters.pool;
+            let above = pool.at + pool.rot * Vec3::new(0.0, 3.5, 0.0);
+            let now = world
+                .fluid(pool.fluid)
+                .and_then(|f| f.center())
+                .unwrap_or(pool.at);
+            let rose = demo.pool_start.distance(above) - now.distance(above);
+            world.report("demo_pool_rose_m", rose);
+            world.check("an open stone over the pool lifts its water", rose > 0.3);
+            demo.step = 6;
         }
         _ => {}
     }
