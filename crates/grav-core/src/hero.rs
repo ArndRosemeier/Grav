@@ -26,6 +26,8 @@ pub struct Movement {
     pub turn_deg_per_s: f32,
     /// Camera up smoothing, seconds (P3).
     pub camera_smoothing: f32,
+    /// Sprinting multiplies the walking speed by this.
+    pub sprint_factor: f32,
     /// Feeling the pull (P9 to P12).
     /// Grip of the feet: the pull along the ground the hero can brace
     /// against, as a share of the press onto it (P9).
@@ -67,6 +69,7 @@ impl Default for Movement {
             lethal_impact: 22.0,
             turn_deg_per_s: 90.0,
             camera_smoothing: 0.5,
+            sprint_factor: 1.7,
             grip: 0.3,
             slide_max: 14.0,
             walk_pull_gain: 1.0,

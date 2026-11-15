@@ -18,6 +18,8 @@ pub struct Hero {
     pub heading: Vec3,
     /// The camera's up, smoothed towards the body's up (P3).
     pub cam_up: Vec3,
+    /// How far the camera looks up (down when negative), degrees.
+    pub look_pitch: f32,
     pub health: f32,
     was_grounded: bool,
     last_fall: Vec3,
@@ -45,7 +47,10 @@ pub struct HeroInput {
     pub walk: Vec2,
     /// Degrees to turn right this frame.
     pub turn: f32,
+    /// Degrees to look up this frame.
+    pub pitch: f32,
     pub jump: bool,
+    pub sprint: bool,
 }
 
 impl Hero {
@@ -80,6 +85,7 @@ impl Hero {
             clip: None,
             heading,
             cam_up: up,
+            look_pitch: 0.0,
             health: 100.0,
             was_grounded: false,
             last_fall: Vec3::ZERO,
@@ -209,7 +215,9 @@ impl Hero {
             let dir =
                 along(self.heading * input.walk.y + right * input.walk.x).clamp_length_max(1.0);
             let want = if self.walking_allowed && dir.length_squared() > 1e-6 {
-                dir * walk_speed_in(m, s.gravity, ground, dir.normalize()) * control
+                dir * walk_speed_in(m, s.gravity, ground, dir.normalize())
+                    * control
+                    * if input.sprint { m.sprint_factor } else { 1.0 }
             } else {
                 Vec3::ZERO
             };
@@ -278,7 +286,17 @@ impl Hero {
                 self.clip = Some(want);
             }
         }
-        world.look_follow_entity_up(self.id, self.cam_up, self.heading, 5.5, 2.2)?;
+        // The camera circles the head: behind him, raised or lowered by the
+        // look pitch, pulled in where rock is in the way.
+        self.look_pitch = (self.look_pitch + input.pitch).clamp(-60.0, 70.0);
+        let (sin, cos) = self.look_pitch.to_radians().sin_cos();
+        let look = self.heading * cos + self.cam_up * sin;
+        let target = feet + self.cam_up * 1.9;
+        let back = -look * 5.5;
+        let room = world
+            .cast_sphere_ignoring(target, back, 0.3, 5.5, self.id)
+            .map_or(1.0, |hit| (hit.distance / 5.5).clamp(0.05, 1.0));
+        world.look_at_up(target + back * room, target, self.cam_up);
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 //! Grav sandbox: one spire, the hero, stones and a world that reacts.
 //!
-//! Keys: WASD walk, Q/E turn (or the mouse with the right button held),
+//! Keys: WASD walk, Q/E turn (or look around with the mouse, right button held),
 //! Space jump (push off while drifting), 1-9 pick a stone, F hold to open,
 //! C hold to close (costs coating), G take in hand / pack, T hold to aim
 //! and release to throw, V set on the surface in reach, X recover, Z recall,
@@ -148,16 +148,22 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let hero_id = g.hero.id;
     let feet = g.hero.feet(world);
     let head = g.hero.head(world);
-    let aim = (g.hero.heading * 0.9 - g.hero.cam_up * 0.25).normalize();
+    // Aim where the camera looks, a little below the middle.
+    let (sin, cos) = g.hero.look_pitch.to_radians().sin_cos();
+    let aim = (g.hero.heading * cos + g.hero.cam_up * (sin - 0.25)).normalize();
 
     // --- Stone handling ---
     let mut keys = HeroInput {
         walk: input.move_xz(),
         turn: input.axis(Key::Q, Key::E) * 100.0 * dt,
         jump: input.pressed(Key::Space),
+        pitch: 0.0,
+        sprint: input.down(Key::Shift),
     };
     if input.mouse_down(MouseButton::Right) {
-        keys.turn -= input.look_delta(0.15).0;
+        let (yaw, pitch) = input.look_delta(0.15);
+        keys.turn -= yaw;
+        keys.pitch = pitch;
     }
     for (k, key) in [
         Key::Digit1,
@@ -406,7 +412,7 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     }
     ui.text_styled(
         Anchor::Bottom,
-        "WASD walk  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  T aim+throw  V set  X recover  Z recall  R sense  P palette",
+        "WASD walk  Shift sprint  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  T aim+throw  V set  X recover  Z recall  R sense  P palette",
         14.0,
         rgb(220, 220, 220),
     );
