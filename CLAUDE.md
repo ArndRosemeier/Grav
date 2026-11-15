@@ -35,4 +35,6 @@ the bar: do not copy it, and do not build new things "like the existing ones".
   changed thing and look at it. If it would look out of place in a modern game, it is not done.
 - **Generic needs go to Engine** (rendering, physics, streaming, destruction), not worked
   around in the game.
+- **Frame rate:** 60 FPS with vsync off on Arnd's PC is the lower end, not the goal (his card
+  is above average, so players' machines will be slower).
 - Warnings are errors. Do not silence a lint, skip a test or loosen a check to get green.
