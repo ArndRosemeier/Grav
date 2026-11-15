@@ -210,6 +210,34 @@ fn views() -> Vec<View> {
             up,
             zoom: false,
         },
+        View {
+            name: "water: a pool in the wild rock of the spire",
+            eye: Vec3::new(39.0, 34.0, 114.0) + Vec3::new(0.75, 0.66, 0.0) * 24.0 - Vec3::Z * 16.0,
+            target: Vec3::new(39.0, 34.0, 114.0),
+            up: Vec3::new(0.75, 0.66, 0.0),
+            zoom: false,
+        },
+        View {
+            name: "water: a pool on the flare",
+            eye: Vec3::new(58.0, 30.0, -219.0) + Vec3::new(0.5, 0.3, 0.6) * 20.0,
+            target: Vec3::new(58.0, 30.0, -219.0),
+            up: Vec3::new(0.6, 0.3, 0.7).normalize(),
+            zoom: false,
+        },
+        View {
+            name: "water: a pool on the wall by the dwarven street",
+            eye: Vec3::new(196.0, 20.0, -226.0),
+            target: Vec3::new(214.0, 42.0, -238.0),
+            up: Vec3::Z,
+            zoom: false,
+        },
+        View {
+            name: "water: the spire's far side from the air",
+            eye: Vec3::new(60.0, -150.0, -20.0),
+            target: Vec3::new(0.0, -40.0, 40.0),
+            up: Vec3::Z,
+            zoom: false,
+        },
     ]
 }
 

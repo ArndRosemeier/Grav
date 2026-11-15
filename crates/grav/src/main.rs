@@ -19,6 +19,7 @@ mod space;
 mod stones;
 mod visuals;
 mod water;
+mod wet;
 
 use engine::egui;
 use engine::prelude::*;

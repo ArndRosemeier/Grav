@@ -99,6 +99,9 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
         if piece.solid {
             world.add_body(id, Body::fixed().shape(BodyShape::Mesh))?;
         }
+        if piece.kind == rock::RockKind::Water {
+            world.set_casts_shadow(id, false)?;
+        }
     }
     // The rest of the cavern: scenery in level-of-detail sets.
     for piece in crate::cavern::Cavern::new().build()? {

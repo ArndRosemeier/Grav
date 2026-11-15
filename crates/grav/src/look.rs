@@ -185,12 +185,26 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
         emission = amber * (crack * glow + halo * halo * 0.05 * m.params[1].y);
     }
 
+    // Water (uv.x: how wet, from the water map): soaked rock is dark and
+    // glossy, and where it dries a pale mineral crust is left behind.
+    let wetness = clamp(m.uv.x, 0.0, 1.0) + (gv_noise(p * 0.9 + 3.0) - 0.5) * 0.12 * step(0.02, m.uv.x);
+    let moist = smoothstep(0.05, 0.3, wetness);
+    let crust = smoothstep(0.4, 0.46, wetness) * (1.0 - smoothstep(0.5, 0.58, wetness)) * smoothstep(0.3, 0.6, mottle);
+    let soaked = smoothstep(0.6, 0.78, wetness);
+    color = color * (1.0 - 0.22 * moist);
+    rough = rough - 0.2 * moist * (1.0 - threads);
+    color = mix(color, vec3<f32>(0.17, 0.19, 0.165) * (0.5 + 0.7 * mottle), crust * 0.5 * (1.0 - threads));
+    rough = mix(rough, 0.97, crust);
+    color = color * mix(1.0, 0.45, soaked);
+    rough = mix(rough, 0.1 + 0.18 * gv_noise(p * 5.0), soaked);
+    n = normalize(mix(n, n0, soaked * 0.5));
+
     // Rough stone has no mirror sheen at a glancing view: its grain hides
     // it. Lean the shading normal towards the eye there, so the sky's
     // reflection does not wash the strata out along a street.
     let to_eye = normalize(m.view_dir) * sign(dot(n0, m.view_dir));
     let glance = 1.0 - clamp(dot(n, to_eye), 0.0, 1.0);
-    n = normalize(n + to_eye * glance * glance * 1.4 * (1.0 - metal));
+    n = normalize(n + to_eye * glance * glance * 1.4 * (1.0 - metal) * (1.0 - soaked));
     o.color = vec4<f32>(color, 1.0);
     o.normal = n;
     o.roughness = clamp(rough, 0.05, 1.0);
@@ -262,6 +276,31 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 }
 "#;
 
+/// Water standing and running on the rock: dark, clear at the edge, with
+/// a slow ripple. uv.x: depth in metres.
+const WATER: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let p = m.world_pos;
+    let n0 = normalize(m.normal);
+    let t = m.time * 0.35;
+    let g = vec3<f32>(
+        gv_noise(p * 1.9 + vec3<f32>(t, 0.0, 0.0)),
+        gv_noise(p * 1.9 + vec3<f32>(17.0, t, 0.0)),
+        gv_noise(p * 1.9 + vec3<f32>(0.0, 31.0, t))) - vec3<f32>(0.5);
+    let deep = smoothstep(0.0, 1.6, m.uv.x);
+    let ripple = (g - n0 * dot(g, n0)) * mix(0.22, 0.1, deep);
+    o.normal = normalize(n0 + ripple);
+    let shallow = vec3<f32>(0.012, 0.03, 0.034);
+    let depth_color = vec3<f32>(0.004, 0.02, 0.03);
+    o.color = vec4<f32>(mix(shallow, depth_color, deep), mix(0.45, 0.94, deep));
+    o.roughness = mix(0.22, 0.03, smoothstep(0.0, 0.3, m.uv.x));
+    o.metallic = 0.0;
+    o.emission = vec3<f32>(0.0);
+    return o;
+}
+"#;
+
 /// How strong the heart's light is on the far rock, matched by eye to the
 /// engine's own light on the near rock.
 const CAVERN_LIGHT: f32 = 0.5;
@@ -273,6 +312,7 @@ pub struct Look {
     island: CustomMaterialId,
     far: CustomMaterialId,
     cavern: CustomMaterialId,
+    water: CustomMaterialId,
     heart_dir: Vec3,
 }
 
@@ -309,12 +349,16 @@ impl Look {
                 [heart_center.x, heart_center.y, heart_center.z, CAVERN_LIGHT],
             ),
         )?;
+        let water = world.add_material(
+            CustomMaterial::new("water on rock", format!("{NOISE}{WATER}")).see_through(),
+        )?;
         Ok(Self {
             spire,
             wall,
             island,
             far,
             cavern,
+            water,
             heart_dir,
         })
     }
@@ -329,6 +373,7 @@ impl Look {
             RockKind::Wall => self.wall,
             RockKind::Island => self.island,
             RockKind::FarSpire => self.far,
+            RockKind::Water => self.water,
         }
     }
 

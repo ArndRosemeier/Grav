@@ -16,6 +16,7 @@
 //! Meshes are built on worker threads and handed over ready to spawn.
 
 use crate::space::{self, ISLAND_CENTER, ISLAND_RADIUS, SPIRE_END, SPIRE_RADIUS, WALL_Z};
+use crate::wet::{Ground, Water};
 use engine::prelude::*;
 use engine::proc::Noise;
 use std::f32::consts::TAU;
@@ -467,6 +468,7 @@ fn grid_mesh(
     rows: std::ops::Range<i32>,
     cols: std::ops::Range<i32>,
     point: &(dyn Fn(i32, i32) -> Vec3 + Sync),
+    uv: &(dyn Fn(i32, i32) -> [f32; 2] + Sync),
     flip: bool,
 ) -> EngineResult<Mesh> {
     let mut mesh = Mesh::new();
@@ -490,6 +492,7 @@ fn grid_mesh(
             let id = mesh.add_point(p)?;
             mesh.set_point_normal(id, n)?;
             mesh.set_point_color(id, white)?;
+            mesh.set_point_uv(id, uv(r, c))?;
             ids.push(id);
         }
     }
@@ -516,6 +519,8 @@ pub enum RockKind {
     Wall,
     Island,
     FarSpire,
+    /// Standing and running water on the rock.
+    Water,
 }
 
 /// One finished piece of rock, ready to spawn.
@@ -529,29 +534,117 @@ pub struct RockPiece {
 const SPIRE_STEP: f32 = 1.25;
 const SPIRE_AROUND: i32 = 288;
 
-fn spire_chunks(rock: &Rock) -> Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>> {
-    // Row 0 is at FLARE_TOP; rows above run along the axis, rows below
-    // follow the flare down and out onto the wall.
-    let z0 = FLARE_TOP;
-    let rows = ((SPIRE_TIP - z0) / SPIRE_STEP).ceil() as i32;
+impl Rock {
+    /// The spire's mesh rows: row 0 is at FLARE_TOP, rows above run along
+    /// the axis, rows below follow the flare down and out onto the wall.
+    /// First and last row.
+    fn spire_rows(&self) -> (i32, i32) {
+        (
+            1 - self.flare_rows() as i32,
+            ((SPIRE_TIP - FLARE_TOP) / SPIRE_STEP).ceil() as i32,
+        )
+    }
+
+    /// The spire's mesh point at `row` and column `col` around.
+    fn spire_grid_point(&self, row: i32, col: i32) -> Vec3 {
+        let theta = col as f32 / SPIRE_AROUND as f32 * TAU;
+        if row < 0 {
+            return self.flare_point(theta, (-row) as usize);
+        }
+        let z = (FLARE_TOP + row as f32 * SPIRE_STEP).min(SPIRE_TIP);
+        self.spire_point(theta, z)
+    }
+
+    /// The wall's mesh point at grid (`row`, `col`), each from
+    /// `-WALL_HALF_STEPS` to `WALL_HALF_STEPS`.
+    fn wall_grid_point(&self, row: i32, col: i32) -> Vec3 {
+        self.wall_point(
+            wall_coord(col, WALL_HALF_STEPS),
+            wall_coord(row, WALL_HALF_STEPS),
+        )
+    }
+
+    /// The water on the spire (flare included) and on the wall.
+    pub fn waters(&self, heart: Vec3) -> Waters {
+        let field = space::base_field();
+        let fill = |ground: &mut Ground, i: usize, p: Vec3, out: Vec3| {
+            ground.at[i] = p;
+            ground.potential[i] = field.vein_potential(p);
+            let pull = field.acceleration(&grav_core::BodyQuery::at(p + out * 0.05));
+            let g = pull.length() / grav_core::G;
+            ground.pull[i] = g;
+            ground.up[i] = if g > 0.02 { -pull.normalize() } else { out };
+        };
+        let (first, last) = self.spire_rows();
+        let mut spire = Ground::new((last - first + 1) as usize, SPIRE_AROUND as usize, true);
+        for r in first..=last {
+            for c in 0..SPIRE_AROUND {
+                let i = spire.index((r - first) as usize, c as usize);
+                let p = self.spire_grid_point(r, c);
+                let out = Vec3::new(p.x, p.y, 0.0).normalize_or_zero();
+                fill(&mut spire, i, p, out);
+                // Off the skirt's end the water is the wall's.
+                spire.drain[i] = r == first;
+            }
+        }
+        let side = (2 * WALL_HALF_STEPS + 1) as usize;
+        let mut wall = Ground::new(side, side, false);
+        for r in -WALL_HALF_STEPS..=WALL_HALF_STEPS {
+            for c in -WALL_HALF_STEPS..=WALL_HALF_STEPS {
+                let i = wall.index(
+                    (r + WALL_HALF_STEPS) as usize,
+                    (c + WALL_HALF_STEPS) as usize,
+                );
+                let p = self.wall_grid_point(r, c);
+                fill(&mut wall, i, p, Vec3::Z);
+                // Under the flare the wall is out of sight; at its edge the
+                // cavern's wall takes over.
+                let edge = r.abs() == WALL_HALF_STEPS || c.abs() == WALL_HALF_STEPS;
+                wall.drain[i] = edge || p.truncate().length() < 156.0;
+            }
+        }
+        let spire_water = spire.water(heart);
+        let wall_water = wall.water(heart);
+        Waters {
+            spire,
+            spire_water,
+            wall,
+            wall_water,
+        }
+    }
+}
+
+/// The water of this space's rock (`Rock::waters`).
+pub struct Waters {
+    pub spire: Ground,
+    pub spire_water: Water,
+    pub wall: Ground,
+    pub wall_water: Water,
+}
+
+type Job = Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>;
+
+fn spire_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
+    let (first, rows) = rock.spire_rows();
     let per_chunk = 46;
-    let mut jobs: Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>> = Vec::new();
-    let mut start = 1 - rock.flare_rows() as i32;
+    let mut jobs: Vec<Job> = Vec::new();
+    let mut start = first;
     while start < rows {
         let end = (start + per_chunk).min(rows);
         let rock = rock.clone();
+        let waters = waters.clone();
         jobs.push(Box::new(move || {
-            let point = move |r: i32, c: i32| {
-                let theta = c as f32 / SPIRE_AROUND as f32 * TAU;
-                if r < 0 {
-                    return rock.flare_point(theta, (-r) as usize);
-                }
-                let z = (z0 + r as f32 * SPIRE_STEP).min(SPIRE_TIP);
-                rock.spire_point(theta, z)
+            let point = |r: i32, c: i32| rock.spire_grid_point(r, c);
+            let uv = |r: i32, c: i32| {
+                let r = r.clamp(first, rows);
+                let i = waters
+                    .spire
+                    .index((r - first) as usize, c.rem_euclid(SPIRE_AROUND) as usize);
+                [waters.spire_water.wet[i], waters.spire_water.depth[i]]
             };
             // Rows run along +z, columns around towards +x from +y, so
             // du x dv points out of the rock.
-            let mesh = grid_mesh(start..end + 1, 0..SPIRE_AROUND + 1, &point, false)?;
+            let mesh = grid_mesh(start..end + 1, 0..SPIRE_AROUND + 1, &point, &uv, false)?;
             Ok(RockPiece {
                 kind: RockKind::Spire,
                 mesh: mesh.prepare(),
@@ -563,14 +656,94 @@ fn spire_chunks(rock: &Rock) -> Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> 
     jobs
 }
 
+/// The water that shows: a sheet just over the rock wherever it stands or
+/// runs, dipping under the rock where it does not.
+fn water_jobs(waters: &Arc<Waters>) -> Vec<Job> {
+    let mut jobs: Vec<Job> = Vec::new();
+    for on_wall in [false, true] {
+        let rows = if on_wall {
+            waters.wall.rows
+        } else {
+            waters.spire.rows
+        };
+        let mut start = 0;
+        while start + 1 < rows {
+            let end = (start + 64).min(rows - 1);
+            let waters = waters.clone();
+            jobs.push(Box::new(move || {
+                let (ground, water) = if on_wall {
+                    (&waters.wall, &waters.wall_water)
+                } else {
+                    (&waters.spire, &waters.spire_water)
+                };
+                let cols = ground.cols;
+                let last_col = if ground.ring { cols } else { cols - 1 };
+                let shows = |i: usize| water.surface[i] >= 0.0;
+                let mut mesh = Mesh::new();
+                let mut ids = std::collections::HashMap::new();
+                let mut vertex = |mesh: &mut Mesh, i: usize| -> EngineResult<PointId> {
+                    if let Some(&id) = ids.get(&i) {
+                        return Ok(id);
+                    }
+                    let lift = water.surface[i] + 0.05;
+                    let id = mesh.add_point(ground.at[i] + ground.up[i] * lift)?;
+                    mesh.set_point_normal(id, ground.up[i])?;
+                    mesh.set_point_color(id, rgb(255, 255, 255))?;
+                    let flow = (water.flow[i] / crate::wet::STREAM).min(1.0);
+                    mesh.set_point_uv(id, [water.depth[i], flow])?;
+                    ids.insert(i, id);
+                    Ok(id)
+                };
+                for r in start..end {
+                    for c in 0..last_col {
+                        let corners = [
+                            ground.index(r, c),
+                            ground.index(r + 1, c),
+                            ground.index(r + 1, c + 1),
+                            ground.index(r, c + 1),
+                        ];
+                        if !corners.iter().any(|&i| shows(i)) {
+                            continue;
+                        }
+                        let [a, b, cc, d] = corners;
+                        let (a, b, cc, d) = (
+                            vertex(&mut mesh, a)?,
+                            vertex(&mut mesh, b)?,
+                            vertex(&mut mesh, cc)?,
+                            vertex(&mut mesh, d)?,
+                        );
+                        if on_wall {
+                            mesh.add_triangle(a, cc, b)?;
+                            mesh.add_triangle(a, d, cc)?;
+                        } else {
+                            mesh.add_triangle(a, b, cc)?;
+                            mesh.add_triangle(a, cc, d)?;
+                        }
+                    }
+                }
+                Ok(RockPiece {
+                    kind: RockKind::Water,
+                    mesh: mesh.prepare(),
+                    solid: false,
+                })
+            }));
+            start = end;
+        }
+    }
+    jobs
+}
+
 /// Wall grid coordinate: dense at the spire root, coarse far out.
 fn wall_coord(i: i32, half_steps: i32) -> f32 {
     let u = i as f32 / half_steps as f32;
     WALL_HALF * (0.3 * u + 0.7 * u * u * u)
 }
 
-fn wall_chunks(rock: &Rock) -> Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>> {
-    let half_steps = 216;
+/// The wall's grid runs this many steps each way from the spire's axis.
+const WALL_HALF_STEPS: i32 = 216;
+
+fn wall_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
+    let half_steps = WALL_HALF_STEPS;
     let per_chunk = 54;
     let mut jobs: Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>> = Vec::new();
     let mut r0 = -half_steps;
@@ -580,11 +753,17 @@ fn wall_chunks(rock: &Rock) -> Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> +
         while c0 < half_steps {
             let c1 = (c0 + per_chunk).min(half_steps);
             let rock = rock.clone();
+            let waters = waters.clone();
             jobs.push(Box::new(move || {
-                let point = move |r: i32, c: i32| {
-                    rock.wall_point(wall_coord(c, half_steps), wall_coord(r, half_steps))
+                let point = |r: i32, c: i32| rock.wall_grid_point(r, c);
+                let uv = |r: i32, c: i32| {
+                    let i = waters.wall.index(
+                        (r.clamp(-half_steps, half_steps) + half_steps) as usize,
+                        (c.clamp(-half_steps, half_steps) + half_steps) as usize,
+                    );
+                    [waters.wall_water.wet[i], waters.wall_water.depth[i]]
                 };
-                let mesh = grid_mesh(r0..r1 + 1, c0..c1 + 1, &point, true)?;
+                let mesh = grid_mesh(r0..r1 + 1, c0..c1 + 1, &point, &uv, true)?;
                 Ok(RockPiece {
                     kind: RockKind::Wall,
                     mesh: mesh.prepare(),
@@ -610,7 +789,7 @@ fn island_job(rock: &Rock) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send
             let dir = Vec3::new(lat.sin() * lon.sin(), lat.cos(), lat.sin() * lon.cos());
             rock.island_point(dir)
         };
-        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, false)?;
+        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, &|_, _| [0.0, 0.0], false)?;
         Ok(RockPiece {
             kind: RockKind::Island,
             mesh: mesh.prepare(),
@@ -700,7 +879,7 @@ fn far_spire_job(spire: FarSpire) -> Box<dyn FnOnce() -> EngineResult<RockPiece>
         };
         // Rows run along the axis, columns around from `side` to `up`
         // (axis x side): du x dv points inward, so turn it round.
-        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, true)?;
+        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, &|_, _| [0.0, 0.0], true)?;
         Ok(RockPiece {
             kind: RockKind::FarSpire,
             mesh: mesh.prepare(),
@@ -712,8 +891,10 @@ fn far_spire_job(spire: FarSpire) -> Box<dyn FnOnce() -> EngineResult<RockPiece>
 /// Build all the rock on worker threads. Takes a few seconds; the caller
 /// spawns the pieces.
 pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
-    let mut jobs = spire_chunks(rock);
-    jobs.extend(wall_chunks(rock));
+    let waters = Arc::new(rock.waters(heart_dir));
+    let mut jobs = spire_chunks(rock, &waters);
+    jobs.extend(wall_chunks(rock, &waters));
+    jobs.extend(water_jobs(&waters));
     jobs.push(island_job(rock));
     for s in far_spires(heart_dir) {
         jobs.push(far_spire_job(s));
@@ -757,6 +938,39 @@ pub fn on_workers<T: Send>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore]
+    fn where_the_water_is() {
+        let rock = Rock::new();
+        let w = rock.waters(space::HEART_CENTER.normalize());
+        for (name, g, wa) in [
+            ("spire", &w.spire, &w.spire_water),
+            ("wall", &w.wall, &w.wall_water),
+        ] {
+            let wet = wa.depth.iter().filter(|&&d| d > 0.02).count();
+            let stream = wa.wet.iter().filter(|&&x| x > 0.93).count();
+            println!(
+                "{name}: {} points, {wet} under water, {stream} shown",
+                g.at.len()
+            );
+            let mut deep: Vec<usize> = (0..g.at.len()).collect();
+            deep.sort_by(|&a, &b| wa.depth[b].total_cmp(&wa.depth[a]));
+            let mut shown: Vec<Vec3> = Vec::new();
+            for i in deep {
+                if shown.iter().all(|p| p.distance(g.at[i]) > 40.0) {
+                    println!(
+                        "  depth {:.1} at {:.0} flow {:.0}",
+                        wa.depth[i], g.at[i], wa.flow[i]
+                    );
+                    shown.push(g.at[i]);
+                    if shown.len() > 14 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn the_town_ground_is_gentle_and_never_below_the_plain_cylinder() {
