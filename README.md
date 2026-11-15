@@ -47,5 +47,5 @@ run the game to override any of them.
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-python tools/verify.py grav --frames 480 --shots 60,150,420
+python tools/verify.py grav --frames 600 --shots 60,150,420,560
 ```

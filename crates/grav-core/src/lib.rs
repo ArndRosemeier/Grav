@@ -22,7 +22,10 @@ pub mod vein;
 pub use bonds::{BondClass, PieceId, PieceStage, Structure, StructureStep};
 pub use coating::{Coating, CoatingError};
 pub use field::{BodyQuery, Field, FieldParts, Heart, LodestoneBody};
-pub use hero::{can_walk, fall_damage, jump_speed, Movement};
+pub use hero::{
+    can_walk, fall_damage, jump_speed, press_and_drag, slide_accel, slide_brake, walk_accel,
+    walk_speed_in, Movement,
+};
 
 pub use profile::{Profile, Selectivity, TimeDial};
 pub use source::{Charge, Source, SourceId};

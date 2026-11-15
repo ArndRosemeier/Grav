@@ -46,6 +46,9 @@ struct Demo {
     coating_before: f32,
     broken_open: usize,
     pool_start: Vec3,
+    drag_start: Vec3,
+    drag_stone: Vec3,
+    stumbled: bool,
 }
 
 fn load_tuning() -> Tuning {
@@ -96,7 +99,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ))?;
     }
     let (at, _) = space::spire_frame(0.0, -75.0);
-    let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y)?;
+    let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y, &tuning.movement)?;
     if let Some(body) = dwarf::spawn(world) {
         hero.set_animated_body(world, body);
     }
@@ -203,6 +206,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.palette = !g.palette;
     }
     if let Some(demo) = g.demo.as_mut() {
+        demo.stumbled |= g.hero.stumble > 0.0;
         run_demo(
             demo,
             g.hero.id,
@@ -572,7 +576,37 @@ fn run_demo(
             let rose = demo.pool_start.distance(above) - now.distance(above);
             world.report("demo_pool_rose_m", rose);
             world.check("an open stone over the pool lifts its water", rose > 0.3);
+            // Close it, and stand somewhere quiet for the next part.
+            inv.stones[1].opening = 0.0;
+            let (quiet, _) = space::spire_frame(-20.0, -60.0);
+            world.set_place(hero, Place::new(quiet.x, quiet.y + 0.05, quiet.z))?;
             demo.step = 6;
+        }
+        6 if t > 8.0 => {
+            // P9, P12: a stone opened 7 m to the side drags the hero to it.
+            let (at, rot) = space::spire_frame(-20.0, -60.0);
+            demo.drag_start = world.world_transform(hero)?.w_axis.truncate();
+            demo.drag_stone = at + rot * Vec3::new(0.0, 1.0, 7.0);
+            inv.stones[0].placement = Placement::Set {
+                at: demo.drag_stone,
+                axis: rot * Vec3::Y,
+                on: None,
+            };
+            inv.stones[0].open_to(1.0);
+            demo.stumbled = false;
+            demo.step = 7;
+        }
+        7 if t > 9.5 => {
+            let now = world.world_transform(hero)?.w_axis.truncate();
+            let closer = demo.drag_start.distance(demo.drag_stone) - now.distance(demo.drag_stone);
+            world.report("demo_dragged_m", closer);
+            world.check(
+                "an open stone beside the hero drags him to it",
+                closer > 1.5,
+            );
+            world.check("a sudden pull makes the hero stumble", demo.stumbled);
+            inv.stones[0].opening = 0.0;
+            demo.step = 8;
         }
         _ => {}
     }

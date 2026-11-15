@@ -4,7 +4,10 @@
 use crate::space::place;
 use engine::glam::{Mat3, Vec2};
 use engine::prelude::*;
-use grav_core::{can_walk, fall_damage, jump_speed, Movement, G};
+use grav_core::{
+    can_walk, fall_damage, jump_speed, slide_accel, slide_brake, walk_accel, walk_speed_in,
+    Movement, G,
+};
 
 pub struct Hero {
     pub id: EntityId,
@@ -22,6 +25,17 @@ pub struct Hero {
     pub pull_g: f32,
     pub drifting: bool,
     pub walking_allowed: bool,
+    /// His own walking velocity along the ground: it builds up and dies
+    /// away by his weight (P11).
+    walk_v: Vec3,
+    /// The velocity the pull drags him along the ground with (P9).
+    pub slide: Vec3,
+    /// The pull a moment ago (smoothed over `jolt_window`), to notice a
+    /// sudden change (P12).
+    calm_pull: Option<Vec3>,
+    last_pull: Vec3,
+    /// Seconds of stumbling left (P12).
+    pub stumble: f32,
 }
 
 /// Inputs the hero reads this frame (from keys, or from the demo script).
@@ -35,7 +49,7 @@ pub struct HeroInput {
 }
 
 impl Hero {
-    pub fn spawn(world: &mut World, feet: Vec3, up: Vec3) -> EngineResult<Self> {
+    pub fn spawn(world: &mut World, feet: Vec3, up: Vec3, m: &Movement) -> EngineResult<Self> {
         // A dwarf-sized body: 1.4 m.
         let id = world.spawn_pivot(Place::new(feet.x, feet.y, feet.z));
         world.add_character(
@@ -43,7 +57,10 @@ impl Hero {
             Character::default()
                 .size(1.4, 0.32)
                 .mass(70.0)
-                .up(CharacterUp::field()),
+                .up(CharacterUp::Field {
+                    turn_deg_per_s: m.turn_deg_per_s,
+                    drift_below: m.drift_below_g * G,
+                }),
         )?;
         let mut mesh = Shape::box_at((0.0, 0.62, 0.0), (0.56, 0.95, 0.36), rgb(150, 70, 48))?;
         mesh.append_translated(
@@ -69,6 +86,11 @@ impl Hero {
             pull_g: 0.0,
             drifting: false,
             walking_allowed: false,
+            walk_v: Vec3::ZERO,
+            slide: Vec3::ZERO,
+            calm_pull: None,
+            last_pull: Vec3::ZERO,
+            stumble: 0.0,
         })
     }
 
@@ -136,22 +158,77 @@ impl Hero {
 
         self.pull_g = s.gravity.length() / G;
         self.drifting = self.pull_g < m.drift_below_g;
+        // The ground under the feet: what the pull presses him onto.
+        let feet = self.feet(world);
+        let ground = world
+            .cast_ray_ignoring(feet + up * 0.5, -up, 1.2, self.id)
+            .map(|hit| hit.normal)
+            .filter(|n| n.dot(up) > 0.2)
+            .unwrap_or(up);
+        let along = |v: Vec3| v - ground * v.dot(ground);
         // P4: walk only where the field presses the hero onto the surface.
-        self.walking_allowed = s.grounded && can_walk(m, s.gravity, up);
-        let dir = self.heading * input.walk.y + right * input.walk.x;
-        let walk = if self.walking_allowed {
-            dir.clamp_length_max(1.0) * m.walk_speed
+        self.walking_allowed = s.grounded && can_walk(m, s.gravity, ground);
+
+        // P12: a sudden change of pull yanks him and makes him stumble.
+        let calm = self.calm_pull.get_or_insert(s.gravity);
+        let jolted = (s.gravity - *calm).length() > m.stumble_change_g * G;
+        *calm = calm.lerp(s.gravity, (dt / m.jolt_window.max(dt)).min(1.0));
+        if jolted && s.grounded {
+            self.stumble = m.stumble_seconds;
+            self.slide += along(s.gravity - self.last_pull) * m.jolt_seconds;
+        }
+        self.last_pull = s.gravity;
+        self.stumble = (self.stumble - dt).max(0.0);
+        let control = if self.stumble > 0.0 {
+            m.stumble_control
         } else {
-            Vec3::ZERO
+            1.0
         };
-        world.walk(self.id, walk)?;
+
+        if s.grounded {
+            if !self.was_grounded {
+                // Landing keeps the speed along the ground as a slide.
+                self.slide += along(self.last_fall);
+            }
+            // P9: the pull along the ground drags him once it beats his grip.
+            self.slide = along(self.slide);
+            let drag = slide_accel(m, s.gravity, ground);
+            if drag == Vec3::ZERO {
+                let brake = slide_brake(m, s.gravity, ground) * dt;
+                let v = self.slide.length();
+                self.slide = if v <= brake {
+                    Vec3::ZERO
+                } else {
+                    self.slide * ((v - brake) / v)
+                };
+            } else {
+                self.slide = (self.slide + drag * dt).clamp_length_max(m.slide_max);
+            }
+            // P10, P11: his own walk: slower when heavy or against the
+            // pull, and it builds up and stops by his weight.
+            let dir =
+                along(self.heading * input.walk.y + right * input.walk.x).clamp_length_max(1.0);
+            let want = if self.walking_allowed && dir.length_squared() > 1e-6 {
+                dir * walk_speed_in(m, s.gravity, ground, dir.normalize()) * control
+            } else {
+                Vec3::ZERO
+            };
+            let step = walk_accel(m, s.gravity, ground) * control * dt;
+            let gap = want - along(self.walk_v);
+            self.walk_v = along(self.walk_v) + gap.clamp_length_max(step);
+        } else if self.was_grounded {
+            // Leaving the ground: his speed goes with him.
+            world.push_character(self.id, self.walk_v + self.slide)?;
+            self.walk_v = Vec3::ZERO;
+            self.slide = Vec3::ZERO;
+        }
+        world.walk(self.id, self.walk_v + self.slide)?;
         if input.jump {
             if self.walking_allowed {
                 // P6: a constant jump impulse.
                 world.jump(self.id, jump_speed(m))?;
             } else if self.drifting {
                 // P5: push off whatever is close, along the facing.
-                let feet = self.feet(world);
                 let near = world
                     .cast_sphere_ignoring(feet + self.cam_up * 0.7, -self.cam_up, 0.4, 1.5, self.id)
                     .is_some();
@@ -182,7 +259,6 @@ impl Hero {
             (self.heading - up * self.heading.dot(up)).normalize_or(up.any_orthonormal_vector());
         let x = up.cross(z);
         let rot = Quat::from_mat3(&Mat3::from_cols(x, up, z));
-        let feet = self.feet(world);
         world.set_place(self.body, place(feet, rot))?;
         if let Some(clip) = self.clip {
             // Idle, walk or run by the speed across the surface.
