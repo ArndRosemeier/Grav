@@ -2,8 +2,8 @@
 //!
 //! Keys: WASD walk, Q/E turn (or look around with the mouse, right button held),
 //! Space jump (push off while drifting), 1-9 pick a stone, F hold to open,
-//! C hold to close (costs coating), G take in hand / pack, T hold to aim
-//! and release to throw, V set on the surface in reach, X recover, Z recall,
+//! C hold to close (costs coating), G take in hand / pack, left click throws the
+//! stone in hand to the target zone under the mouse, V set on the surface in reach, X recover, Z recall,
 //! R hold for stone sense, P sandbox palette.
 
 mod cavern;
@@ -39,7 +39,6 @@ struct Game {
     waters: water::Waters,
     tour: Option<shots::Tour>,
     palette: bool,
-    aiming_before: bool,
     demo: Option<Demo>,
 }
 
@@ -119,7 +118,6 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         waters,
         tour,
         palette: false,
-        aiming_before: false,
         demo,
     })
 }
@@ -147,9 +145,6 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let hero_id = g.hero.id;
     let feet = g.hero.feet(world);
     let head = g.hero.head(world);
-    // Aim where the camera looks, a little below the middle.
-    let (sin, cos) = g.hero.look_pitch.to_radians().sin_cos();
-    let aim = (g.hero.heading * cos + g.hero.cam_up * (sin - 0.25)).normalize();
 
     // --- Stone handling ---
     let mut keys = HeroInput {
@@ -192,10 +187,20 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     if input.pressed(Key::G) {
         g.inv.hold_or_stow(hero_id);
     }
-    let aim_hit = |world: &World| world.cast_ray_ignoring(head, aim, g.tuning.throw_range, hero_id);
+    // The target: the surface under the mouse, within throwing range of
+    // the hand. It is shown whenever a stone is out, and a left click
+    // throws the stone there.
+    let hand_now = g.hero.hand(world);
+    let holding = matches!(g.inv.current().placement, Placement::Held { .. });
+    let (eye, mut ray) = world.cursor_ray(frame);
+    if g.demo.is_some() {
+        // No mouse in a verify run: point at the ground ahead of the hero.
+        ray = (feet + g.hero.heading * 8.0 - eye).normalize_or(ray);
+    }
+    let under_mouse = world.cast_ray_ignoring(eye, ray, g.tuning.throw_range + 12.0, hero_id);
+    let target = under_mouse.filter(|hit| hit.point.distance(hand_now) <= g.tuning.throw_range);
     if input.pressed(Key::V) {
-        let hit = aim_hit(world);
-        g.inv.set(hit);
+        g.inv.set(target);
     }
     if input.pressed(Key::X) {
         g.inv.recover(hero_id, feet, world);
@@ -203,12 +208,14 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     if input.pressed(Key::Z) {
         g.inv.recall();
     }
-    let aiming = input.down(Key::T);
-    if g.aiming_before && !aiming {
-        let hit = aim_hit(world);
-        g.inv.throw(g.hero.hand(world), hit);
+    let aiming = holding;
+    if aiming && input.mouse_clicked(MouseButton::Left) && !frame.ui.ctx().wants_pointer_input() {
+        if target.is_none() && under_mouse.is_some() {
+            g.inv.say("Out of throwing range");
+        } else {
+            g.inv.throw(hand_now, target);
+        }
     }
-    g.aiming_before = aiming;
     if input.pressed(Key::P) {
         g.palette = !g.palette;
     }
@@ -272,7 +279,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         .sense(world, input.down(Key::R).then_some(&field), head)?;
     let opening_keys = input.down(Key::F) || input.down(Key::C);
     let preview = if aiming {
-        aim_hit(world).map(|hit| {
+        target.map(|hit| {
             let s = g.inv.current();
             let mut probe = s.clone();
             probe.opening = 1.0;
@@ -280,13 +287,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             with.sources.retain(|x| x.id != s.id);
             with.sources
                 .push(probe.source_at(hit.point + hit.normal * 0.15, hit.normal, None));
-            (hit.point, with)
+            (hit.point, hit.normal, with)
         })
     } else {
         None
     };
     match &preview {
-        Some((landing, with)) => {
+        Some((landing, normal, with)) => {
             let center = feet + up * 0.7;
             let fall = with.acceleration(&BodyQuery {
                 id: hero_id.raw(),
@@ -296,7 +303,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             });
             g.visuals.preview(
                 world,
-                Some((*landing, center + up * 0.0 + g.hero.heading * 0.0, fall)),
+                Some((
+                    *landing,
+                    *normal,
+                    center,
+                    fall,
+                    g.inv.current().spec.charge == Charge::Repelling,
+                )),
             )?;
             g.response.preview(world, Some(with))?;
         }
@@ -410,7 +423,7 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     }
     ui.text_styled(
         Anchor::Bottom,
-        "WASD walk  Shift sprint  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  T aim+throw  V set  X recover  Z recall  R sense  P palette",
+        "WASD walk  Shift sprint  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  Click throw  V set  X recover  Z recall  R sense  P palette",
         14.0,
         rgb(220, 220, 220),
     );
@@ -615,6 +628,9 @@ fn run_demo(
             );
             world.check("a sudden pull makes the hero stumble", demo.stumbled);
             inv.stones[0].opening = 0.0;
+            // Take the shard in hand: the target zone shows under the mouse.
+            inv.selected = 2;
+            inv.hold_or_stow(hero);
             demo.step = 8;
         }
         _ => {}

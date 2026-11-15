@@ -28,8 +28,9 @@ without them a block figure stands in (`GRAV_PACKS` points elsewhere).
 
 WASD walk, Q/E turn (or the mouse with the right button held), Space jump
 (push off while drifting), 1-9 pick a stone, F hold to open, C hold to close
-(costs coating), G take in hand / pack, T hold to aim (preview: landing point,
-your fall arrow, pieces that would break in red) and release to throw, V set
+(costs coating), G take in hand / pack, left click throws the stone in hand to
+the target zone under the mouse (shown whenever a stone is out, up to 30 m,
+with your fall arrow and the pieces that would break in red), Shift sprint, V set
 on the surface in reach, X recover, Z recall (spring sheath), R hold for stone
 sense, P sandbox palette (dress any stone, unlimited coating).
 

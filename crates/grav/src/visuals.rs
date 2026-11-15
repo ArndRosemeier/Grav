@@ -18,6 +18,7 @@ pub struct Visuals {
     sense: EntityId,
     fall_arrow: EntityId,
     marker: EntityId,
+    zone: CustomMaterialId,
 }
 
 /// Deterministic noise for respawning motes.
@@ -25,6 +26,23 @@ fn next(seed: &mut u32) -> f32 {
     *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     (*seed >> 8) as f32 / (1u32 << 24) as f32
 }
+
+/// The target zone: rings on a flat disc that run inwards (a stone that
+/// pulls) and glow in the stone's colour. params[0] = colour, strength.
+const ZONE: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let r = length(m.object_pos.xz) / 1.2;
+    let rim = smoothstep(0.84, 0.9, r) * (1.0 - smoothstep(0.96, 1.0, r));
+    let wave = fract(r * 2.5 + m.time * 0.6);
+    let rings = smoothstep(0.0, 0.08, wave) * (1.0 - smoothstep(0.08, 0.3, wave)) * (1.0 - r) * 0.7;
+    let dot = 1.0 - smoothstep(0.06, 0.1, r);
+    let a = clamp(rim + rings + dot, 0.0, 1.0);
+    o.color = vec4<f32>(m.params[0].xyz, a * 0.9);
+    o.emission = m.params[0].xyz * a * m.params[0].w;
+    return o;
+}
+"#;
 
 fn hidden() -> Place {
     Place::new(0.0, -9999.0, 0.0).with_scale(0.001)
@@ -51,7 +69,21 @@ impl Visuals {
         world.set_instances(sense, &[])?;
         let fall_arrow = world.spawn(arrow_mesh(rgb(255, 80, 200))?);
         world.set_place(fall_arrow, hidden())?;
-        let marker = world.spawn(Shape::ball((0.0, 0.0, 0.0), 0.3, rgba(255, 255, 255, 120))?);
+        let zone = world.add_material(
+            CustomMaterial::new("target zone", ZONE)
+                .see_through()
+                .param(0, [1.0, 0.7, 0.25, 4.0]),
+        )?;
+        let marker = world.spawn(Shape::cylinder(
+            (0.0, 0.0, 0.0),
+            Vec3::Y,
+            1.2,
+            0.02,
+            48,
+            rgba(255, 255, 255, 0),
+        )?);
+        world.set_custom_material(marker, zone)?;
+        world.set_casts_shadow(marker, false)?;
         world.set_place(marker, hidden())?;
         let mut v = Self {
             dust,
@@ -60,6 +92,7 @@ impl Visuals {
             sense,
             fall_arrow,
             marker,
+            zone,
         };
         for _ in 0..DUST {
             let p = v.random_point(around);
@@ -153,11 +186,19 @@ impl Visuals {
     pub fn preview(
         &mut self,
         world: &mut World,
-        show: Option<(Vec3, Vec3, Vec3)>,
+        show: Option<(Vec3, Vec3, Vec3, Vec3, bool)>,
     ) -> EngineResult<()> {
         match show {
-            Some((landing, hero_center, fall)) => {
-                world.set_place(self.marker, Place::new(landing.x, landing.y, landing.z))?;
+            Some((landing, normal, hero_center, fall, repelling)) => {
+                // Amber pulls, blue pushes.
+                let colour = if repelling {
+                    [0.3, 0.6, 1.0, 4.0]
+                } else {
+                    [1.0, 0.7, 0.25, 4.0]
+                };
+                world.set_material_param(self.zone, 0, colour)?;
+                let rot = Quat::from_rotation_arc(Vec3::Y, normal.normalize_or(Vec3::Y));
+                world.set_place(self.marker, place(landing + normal * 0.05, rot))?;
                 let g = fall.length() / G;
                 if g > 0.01 {
                     let rot = Quat::from_rotation_arc(Vec3::Z, fall / fall.length());
