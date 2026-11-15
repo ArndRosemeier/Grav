@@ -185,6 +185,12 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
         emission = amber * (crack * glow + halo * halo * 0.05 * m.params[1].y);
     }
 
+    // Rough stone has no mirror sheen at a glancing view: its grain hides
+    // it. Lean the shading normal towards the eye there, so the sky's
+    // reflection does not wash the strata out along a street.
+    let to_eye = normalize(m.view_dir) * sign(dot(n0, m.view_dir));
+    let glance = 1.0 - clamp(dot(n, to_eye), 0.0, 1.0);
+    n = normalize(n + to_eye * glance * glance * 1.4 * (1.0 - metal));
     o.color = vec4<f32>(color, 1.0);
     o.normal = n;
     o.roughness = clamp(rough, 0.05, 1.0);
