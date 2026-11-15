@@ -10,6 +10,7 @@ The archive is large (about 450 MB). assets/packs is git-ignored.
 
 import json
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -26,6 +27,16 @@ def release(tag: str | None) -> dict:
         return json.load(r)
 
 
+def download(url: str, to: Path) -> None:
+    # curl (built into Windows 10+, macOS and most Linux) is far faster than
+    # urllib here: ~1.2 MB/s against ~0.1 MB/s on one Windows PC.
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if curl and subprocess.run([curl, "-L", "--fail", "-o", str(to), url]).returncode == 0:
+        return
+    with urllib.request.urlopen(url) as r, open(to, "wb") as f:
+        shutil.copyfileobj(r, f, 4 << 20)
+
+
 def main() -> int:
     tag = sys.argv[1] if len(sys.argv) > 1 else None
     rel = release(tag)
@@ -37,8 +48,7 @@ def main() -> int:
     print(f"downloading {asset['name']} ({asset['size'] / 1e6:.0f} MB) ...")
     with tempfile.TemporaryDirectory() as tmp:
         archive = Path(tmp) / asset["name"]
-        with urllib.request.urlopen(asset["browser_download_url"]) as r, open(archive, "wb") as f:
-            shutil.copyfileobj(r, f)
+        download(asset["browser_download_url"], archive)
         out = Path(tmp) / "out"
         with tarfile.open(archive) as t:
             t.extractall(out, filter="data")
