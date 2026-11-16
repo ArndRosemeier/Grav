@@ -15,7 +15,7 @@
 //! Each building is made once per shape, at three levels of detail and as
 //! a plain solid for collision, and drawn wherever one stands.
 
-use crate::flora::{arc, fine, hash, smooth, solid, Form, Stand, Stuff};
+use crate::flora::{arc, fine, hash, smooth, solid, Form, Job, Stand, Stuff};
 use crate::pieces::{shatter, Cells, Hold, Shard};
 use crate::rock::{self, Rock, Waters};
 use crate::space;
@@ -1315,7 +1315,6 @@ fn brazier(_: u32, detail: u32) -> EngineResult<Form> {
     Ok(f)
 }
 
-type Job = Box<dyn FnOnce() -> EngineResult<Stand> + Send>;
 /// Makes a thing's shape from which shape of it and a level of detail.
 type Shaper = fn(u32, u32) -> EngineResult<Form>;
 

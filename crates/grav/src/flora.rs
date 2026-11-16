@@ -1479,7 +1479,8 @@ pub enum Stuff {
     Built,
 }
 
-type Job = Box<dyn FnOnce() -> EngineResult<Stand> + Send>;
+/// Work for a worker thread: builds one stand (plants or buildings).
+pub(crate) type Job = Box<dyn FnOnce() -> EngineResult<Stand> + Send>;
 /// Makes a plant's shape from a seed and a level of detail.
 type Shaper = fn(u32, u32) -> EngineResult<Mesh>;
 
