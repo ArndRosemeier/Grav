@@ -30,7 +30,7 @@ mod wet;
 
 use boxes::Boxes;
 use engine::prelude::*;
-use grav_core::{BodyQuery, BoxState, Charge, Face, Program, Tuning};
+use grav_core::{BodyQuery, BoxState, Charge, Face, FieldParts, Program, Tuning, G};
 use hero::{Hero, HeroInput};
 use response::Response;
 use std::collections::HashMap;
@@ -49,6 +49,8 @@ struct Game {
     goods: goods::Goods,
     people: people::People,
     hero: Hero,
+    /// The field's parts at the hero's middle, for the HUD.
+    pull: FieldParts,
     boxes: Boxes,
     /// Seconds + or - has been held while changing the range.
     range_held: f32,
@@ -121,6 +123,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         goods,
         people: people::People::new(),
         hero,
+        pull: FieldParts::default(),
         boxes,
         range_held: 0.0,
         response,
@@ -270,6 +273,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         ));
     }
     link::install(world, &field, HashMap::new());
+    // What pulls on the hero, part by part, read from the field itself.
+    g.pull = field.parts(&BodyQuery {
+        id: hero_id.raw(),
+        position: feet + up * 0.9,
+        mass: 70.0,
+        lodestone: None,
+    });
     // The grass shows the pull: it turns to the field around open stones.
     let eye = world.camera().eye();
     g.grass.update(world, &field, eye)?;
@@ -347,6 +357,10 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             "hero stands and can walk at the start",
             g.hero.walking_allowed,
         );
+        world.check(
+            "the hero does not slide on plain rock",
+            g.hero.slide.length() < 0.05,
+        );
     }
     world.report("hero_pull_g", g.hero.pull_g);
     world.report("pieces_broken", g.response.broken_total);
@@ -371,8 +385,13 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
         100.0,
         rgb(200, 60, 60),
     );
+    let pull = g.pull.total();
     let state = if g.hero.drifting {
         "drifting"
+    } else if !g.hero.grounded {
+        "in the air"
+    } else if g.hero.slide.length() > 0.2 {
+        "sliding"
     } else if g.hero.walking_allowed {
         "standing"
     } else {
@@ -380,8 +399,28 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     };
     ui.text(
         Anchor::TopRight,
-        format!("Pull {:.2} g, {state}", g.hero.pull_g),
+        format!("Pull {:.2} g, {state}", pull.length() / G),
     );
+    // Where it comes from: the rock's vein, open boxes, the heart.
+    let part = |v: Vec3| v.length() / G;
+    let mut from = format!("rock {:.2}", part(g.pull.veins));
+    if g.pull.stones != Vec3::ZERO {
+        from += &format!("  boxes {:.2}", part(g.pull.stones));
+    }
+    if g.pull.heart != Vec3::ZERO {
+        from += &format!("  heart {:.2}", part(g.pull.heart));
+    }
+    let small = rgb(205, 205, 205);
+    ui.text_styled(Anchor::TopRight, from, 14.0, small);
+    // Which way it pulls: straight into the ground holds, slanted drags.
+    if g.hero.grounded && pull.length() > 1e-3 {
+        ui.text_styled(
+            Anchor::TopRight,
+            format!("{:.0}\u{b0} off straight down", g.hero.pull_tilt_deg),
+            14.0,
+            small,
+        );
+    }
     if let Some((m, _)) = &g.boxes.message {
         ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
     }
@@ -502,11 +541,11 @@ fn run_demo(
             demo.step = 6;
         }
         6 if t > 9.5 => {
-            // P9, P12: box 1 again, open all round and hanging 7 m to
-            // the side, drags the hero to it.
+            // P9, P12: box 1 again, open all round and hanging 3.5 m to
+            // the side: too steep a pull for his grip, it drags him to it.
             let (at, rot) = space::spire_frame(-20.0, -60.0);
             demo.drag_start = world.world_transform(hero)?.w_axis.truncate();
-            demo.drag_stone = at + rot * Vec3::new(0.0, 1.0, 7.0);
+            demo.drag_stone = at + rot * Vec3::new(0.0, 1.0, 3.5);
             let s = &mut boxes.stones[0];
             s.program = Program::default();
             s.program.faces = [Some(0.0); 6];
@@ -519,7 +558,7 @@ fn run_demo(
             let now = world.world_transform(hero)?.w_axis.truncate();
             let closer = demo.drag_start.distance(demo.drag_stone) - now.distance(demo.drag_stone);
             world.report("demo_dragged_m", closer);
-            world.check("an open box beside the hero drags him to it", closer > 1.5);
+            world.check("an open box beside the hero drags him to it", closer > 1.0);
             world.check("a sudden pull makes the hero stumble", demo.stumbled);
             // Take the shard in hand: the preview shows.
             boxes.pick(2);

@@ -10,8 +10,15 @@ use serde::{Deserialize, Serialize};
 pub struct Movement {
     /// Walking needs at least this press against the surface, in g (P4).
     pub walk_min_g: f32,
-    /// Steepest slope against local down, degrees (P4).
-    pub walk_max_slope_deg: f32,
+    /// Steepest slope walked up and stood on at 1 g, degrees against the
+    /// pull (P4). Boots on rock: steep.
+    pub climb_slope_deg: f32,
+    /// The slope limit's tangent scales with pull^-this: light pull lets
+    /// him climb steeper, heavy pull less (P4).
+    pub climb_slope_exp: f32,
+    /// The slope limit stays within these, degrees.
+    pub climb_slope_min_deg: f32,
+    pub climb_slope_max_deg: f32,
     /// Below this the hero drifts, in g (P5).
     pub drift_below_g: f32,
     /// Constant walk speed, m/s (P6).
@@ -29,9 +36,9 @@ pub struct Movement {
     /// Sprinting multiplies the walking speed by this.
     pub sprint_factor: f32,
     /// Feeling the pull (P9 to P12).
-    /// Grip of the feet: the pull along the ground the hero can brace
-    /// against, as a share of the press onto it (P9).
-    pub grip: f32,
+    /// Once sliding, friction brakes with this share of the grip that
+    /// holds a standing hero (rock on boots: a slide stops quickly) (P9).
+    pub slide_friction: f32,
     /// Top sliding speed, m/s (P9).
     pub slide_max: f32,
     /// How much pull along the walking direction speeds or slows the walk:
@@ -61,7 +68,10 @@ impl Default for Movement {
     fn default() -> Self {
         Self {
             walk_min_g: 0.15,
-            walk_max_slope_deg: 45.0,
+            climb_slope_deg: 50.0,
+            climb_slope_exp: 0.5,
+            climb_slope_min_deg: 30.0,
+            climb_slope_max_deg: 72.0,
             drift_below_g: 0.05,
             walk_speed: 3.6,
             jump_height_at_1g: 1.2,
@@ -70,7 +80,7 @@ impl Default for Movement {
             turn_deg_per_s: 90.0,
             camera_smoothing: 0.5,
             sprint_factor: 1.5,
-            grip: 0.3,
+            slide_friction: 0.8,
             slide_max: 14.0,
             walk_pull_gain: 1.0,
             weight_speed_exp: 0.5,
@@ -98,6 +108,23 @@ pub fn fall_damage(m: &Movement, impact_speed: f32) -> f32 {
     ((impact_speed - m.safe_impact) / span).clamp(0.0, 1.0)
 }
 
+/// P4: the steepest slope (degrees against the pull) the hero walks up
+/// and stands on under a pull of `pull_g`: steeper in light pull, less in
+/// heavy.
+pub fn climb_slope_deg(m: &Movement, pull_g: f32) -> f32 {
+    let tan = m.climb_slope_deg.to_radians().tan() * pull_g.max(1e-3).powf(-m.climb_slope_exp);
+    tan.atan()
+        .to_degrees()
+        .clamp(m.climb_slope_min_deg, m.climb_slope_max_deg)
+}
+
+/// P9: the grip of his feet under `accel`: the pull along the ground he
+/// braces against, as a share of the press onto it. It holds exactly up to
+/// the slope he can climb.
+pub fn grip(m: &Movement, accel: Vec3) -> f32 {
+    climb_slope_deg(m, accel.length() / G).to_radians().tan()
+}
+
 /// P4: whether the field `accel` presses the hero onto a surface with
 /// normal `normal` hard enough, at a gentle enough slope, to walk.
 pub fn can_walk(m: &Movement, accel: Vec3, normal: Vec3) -> bool {
@@ -107,7 +134,8 @@ pub fn can_walk(m: &Movement, accel: Vec3, normal: Vec3) -> bool {
     }
     let down = accel / strength;
     let press = -down.dot(normal.normalize_or_zero());
-    press * strength >= m.walk_min_g * G && press >= m.walk_max_slope_deg.to_radians().cos()
+    press * strength >= m.walk_min_g * G
+        && press >= climb_slope_deg(m, strength / G).to_radians().cos()
 }
 
 /// The pull split against a surface with normal `normal`: how hard it
@@ -119,24 +147,25 @@ pub fn press_and_drag(accel: Vec3, normal: Vec3) -> (f32, Vec3) {
     (press, accel + n * press)
 }
 
-/// P9: the acceleration that drags a standing hero along the ground: the
-/// pull along the surface beyond what his grip holds. Zero while he can
-/// brace against it.
-pub fn slide_accel(m: &Movement, accel: Vec3, normal: Vec3) -> Vec3 {
+/// P9: the slide velocity along the ground after `dt` seconds, from `v`.
+/// A standing hero stays put while his grip holds the pull along the
+/// ground; once he slides, the drag speeds him and friction brakes him, so
+/// a slide on rock dies away within moments where the ground levels off.
+pub fn slide_step(m: &Movement, accel: Vec3, normal: Vec3, v: Vec3, dt: f32) -> Vec3 {
     let (press, drag) = press_and_drag(accel, normal);
-    let hold = m.grip * press.max(0.0);
-    let d = drag.length();
-    if d <= hold || d < 1e-6 {
+    let press = press.max(0.0);
+    let hold = grip(m, accel) * press;
+    if v.length() < 1e-3 && drag.length() <= hold {
+        return Vec3::ZERO;
+    }
+    let brake = hold * m.slide_friction * dt;
+    let moved = v + drag * dt;
+    let speed = moved.length();
+    if speed <= brake {
         Vec3::ZERO
     } else {
-        drag * ((d - hold) / d)
+        (moved * ((speed - brake) / speed)).clamp_length_max(m.slide_max)
     }
-}
-
-/// P9: how fast grip brakes a slide once the drag is gone, m/s².
-pub fn slide_brake(m: &Movement, accel: Vec3, normal: Vec3) -> f32 {
-    let (press, drag) = press_and_drag(accel, normal);
-    (m.grip * press.max(0.0) - drag.length()).max(0.0)
 }
 
 /// P10 and P11: the walking speed in direction `dir` (a unit vector along
@@ -192,24 +221,57 @@ mod tests {
     }
 
     #[test]
-    fn a_sideways_pull_drags_once_it_beats_the_grip() {
+    fn steep_rock_holds_and_light_pull_climbs_steeper() {
         let m = Movement::default();
-        let n = Vec3::Y;
-        // Straight down: nothing drags.
-        assert_eq!(slide_accel(&m, Vec3::NEG_Y * G, n), Vec3::ZERO);
-        // A 10 degree lean (tan = 0.18 < grip 0.3): he braces.
-        let lean = |deg: f32| {
+        assert!((climb_slope_deg(&m, 1.0) - 50.0).abs() < 1e-3);
+        assert!(climb_slope_deg(&m, 0.3) > 62.0);
+        assert!(climb_slope_deg(&m, 2.0) < 42.0);
+        let slope = |deg: f32| {
             let a = deg.to_radians();
-            Vec3::new(a.sin(), -a.cos(), 0.0) * G
+            Vec3::new(a.sin(), a.cos(), 0.0)
         };
-        assert_eq!(slide_accel(&m, lean(10.0), n), Vec3::ZERO);
-        assert!(slide_brake(&m, lean(10.0), n) > 0.5);
-        // 30 degrees (tan = 0.58): he slides towards +x.
-        let s = slide_accel(&m, lean(30.0), n);
-        assert!(s.x > 1.5 && s.y.abs() < 1e-5, "{s}");
-        // A pull straight along the ground drags with all of it.
-        let s = slide_accel(&m, Vec3::X * G, n);
-        assert!((s.x - G).abs() < 1e-4);
+        // 1 g straight down on a 45 degree slope: walkable; 55: not.
+        assert!(can_walk(&m, Vec3::NEG_Y * G, slope(45.0)));
+        assert!(!can_walk(&m, Vec3::NEG_Y * G, slope(55.0)));
+        // The same 55 degree slope in 0.3 g: walkable.
+        assert!(can_walk(&m, Vec3::NEG_Y * 0.3 * G, slope(55.0)));
+    }
+
+    #[test]
+    fn a_slide_needs_a_slope_beyond_the_grip_and_dies_on_level_rock() {
+        let m = Movement::default();
+        let down = Vec3::NEG_Y * G;
+        let slope = |deg: f32| {
+            let a = deg.to_radians();
+            Vec3::new(-a.sin(), a.cos(), 0.0)
+        };
+        let dt = 1.0 / 60.0;
+        // Standing on 40 degrees: he holds.
+        assert_eq!(
+            slide_step(&m, down, slope(40.0), Vec3::ZERO, dt),
+            Vec3::ZERO
+        );
+        // On 60 degrees he slides down (the slope falls towards -x).
+        let mut v = Vec3::ZERO;
+        for _ in 0..30 {
+            v = slide_step(&m, down, slope(60.0), v, dt);
+        }
+        assert!(v.x < -0.5 && v.length() > 1.0, "{v}");
+        // Out onto level rock at 5 m/s: stopped within a second, and a
+        // shallow dip never keeps him rocking.
+        let mut v = Vec3::X * 5.0;
+        for _ in 0..60 {
+            v = slide_step(&m, down, Vec3::Y, v, dt);
+        }
+        assert_eq!(v, Vec3::ZERO);
+        let mut v = Vec3::X * 3.0;
+        for i in 0..120 {
+            let side = if v.x > 0.0 { 15.0 } else { -15.0 };
+            v = slide_step(&m, down, slope(side), v, dt);
+            if i > 60 {
+                assert_eq!(v, Vec3::ZERO);
+            }
+        }
     }
 
     #[test]

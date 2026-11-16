@@ -21,8 +21,8 @@ pub mod vein;
 pub use bonds::{BondClass, PieceId, PieceStage, Structure, StructureStep};
 pub use field::{BodyQuery, Field, FieldParts, Heart, LodestoneBody};
 pub use hero::{
-    can_walk, fall_damage, jump_speed, press_and_drag, slide_accel, slide_brake, walk_accel,
-    walk_speed_in, Movement,
+    can_walk, climb_slope_deg, fall_damage, grip, jump_speed, press_and_drag, slide_step,
+    walk_accel, walk_speed_in, Movement,
 };
 
 pub use profile::{Profile, Selectivity, TimeDial};

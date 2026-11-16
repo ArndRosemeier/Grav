@@ -5,7 +5,7 @@ use crate::space::place;
 use engine::glam::{Mat3, Vec2};
 use engine::prelude::*;
 use grav_core::{
-    can_walk, fall_damage, jump_speed, slide_accel, slide_brake, walk_accel, walk_speed_in,
+    can_walk, climb_slope_deg, fall_damage, jump_speed, slide_step, walk_accel, walk_speed_in,
     Movement, G,
 };
 
@@ -35,6 +35,9 @@ pub struct Hero {
     pub pull_g: f32,
     pub drifting: bool,
     pub walking_allowed: bool,
+    pub grounded: bool,
+    /// Degrees between the pull and straight into the ground underfoot.
+    pub pull_tilt_deg: f32,
     /// His own walking velocity along the ground: it builds up and dies
     /// away by his weight (P11).
     walk_v: Vec3,
@@ -102,6 +105,8 @@ impl Hero {
             pull_g: 0.0,
             drifting: false,
             walking_allowed: false,
+            grounded: false,
+            pull_tilt_deg: 0.0,
             walk_v: Vec3::ZERO,
             slide: Vec3::ZERO,
             calm_pull: None,
@@ -174,6 +179,8 @@ impl Hero {
         let right = self.heading.cross(self.cam_up);
 
         self.pull_g = s.gravity.length() / G;
+        // P4: in light pull he climbs steeper, in heavy pull less.
+        world.set_character_max_slope(self.id, climb_slope_deg(m, self.pull_g))?;
         self.drifting = self.pull_g < m.drift_below_g;
         // The ground under the feet: what the pull presses him onto.
         let feet = self.feet(world);
@@ -183,6 +190,8 @@ impl Hero {
             .filter(|n| n.dot(up) > 0.2)
             .unwrap_or(up);
         let along = |v: Vec3| v - ground * v.dot(ground);
+        self.grounded = s.grounded;
+        self.pull_tilt_deg = (-s.gravity).angle_between(ground).to_degrees();
         // P4: walk only where the field presses the hero onto the surface.
         self.walking_allowed = s.grounded && can_walk(m, s.gravity, ground);
 
@@ -203,24 +212,9 @@ impl Hero {
         };
 
         if s.grounded {
-            if !self.was_grounded {
-                // Landing keeps the speed along the ground as a slide.
-                self.slide += along(self.last_fall);
-            }
-            // P9: the pull along the ground drags him once it beats his grip.
-            self.slide = along(self.slide);
-            let drag = slide_accel(m, s.gravity, ground);
-            if drag == Vec3::ZERO {
-                let brake = slide_brake(m, s.gravity, ground) * dt;
-                let v = self.slide.length();
-                self.slide = if v <= brake {
-                    Vec3::ZERO
-                } else {
-                    self.slide * ((v - brake) / v)
-                };
-            } else {
-                self.slide = (self.slide + drag * dt).clamp_length_max(m.slide_max);
-            }
+            // P9: the pull along the ground drags him only on slopes his
+            // grip cannot hold, and friction stops a slide on rock quickly.
+            self.slide = slide_step(m, s.gravity, ground, along(self.slide), dt);
             // P10, P11: his own walk: slower when heavy or against the
             // pull, and it builds up and stops by his weight.
             let dir =
