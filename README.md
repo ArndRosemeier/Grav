@@ -37,9 +37,8 @@ look around), Space jump (push off while drifting), R hold for stone sense.
 Stones travel in coated boxes. 1-9 takes a box in hand (the same key puts it
 away). With a box in hand, a glass box shows where it would hang, with fans
 over the sides it will open, your fall arrow and the pieces that would break.
-Left click throws further, right click shorter (hold to keep changing it; a
-right drag still turns the view), and the two buttons under the crosshair
-throw it or put it away. The box flies straight, shut and weightless, and air
++ and - set how far it flies (hold to keep changing it; the range shows
+under the crosshair), and a left click throws it. The box flies straight, shut and weightless, and air
 stops it. Tab opens the box bench:
 click a face on the unfolded box to make it open some seconds after the box
 comes to rest, and set when the box bares its mass and comes down. Walk to a

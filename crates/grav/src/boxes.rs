@@ -182,8 +182,8 @@ pub struct Boxes {
     pub selected: usize,
     /// The selected box is in the hero's hand, ready to throw.
     pub out: bool,
-    /// How far the next throw carries, m (left click adds, right click
-    /// takes away; it stays set between throws).
+    /// How far the next throw carries, m (+ and - change it; it stays
+    /// set between throws).
     pub range: f32,
     /// The box bench is open.
     pub bench: bool,
@@ -817,7 +817,7 @@ impl Boxes {
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(format!(
-                        "With a box in hand, left click adds range, right click takes it away (up to {flight_range:.0} m); the buttons under the crosshair throw or put the box away. Tab closes the bench."
+                        "With a box in hand, + and - set the range (up to {flight_range:.0} m), a left click throws, and its number key again puts it away. Tab closes the bench."
                     ))
                     .size(12.0)
                     .color(Color32::from_gray(170)),
@@ -828,105 +828,31 @@ impl Boxes {
     }
 }
 
-/// What the throw buttons were asked to do this frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ThrowButton {
-    Throw,
-    Cancel,
-}
-
-/// A round icon button: a dark disc with a ring, brighter on hover.
-fn icon_button(
-    ui: &mut egui::Ui,
-    ring: Color32,
-    paint: impl FnOnce(&egui::Painter, Pos2, f32, Color32),
-) -> egui::Response {
-    let size = 46.0;
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), Sense::click());
-    let c = rect.center();
-    let r = size * 0.5 - 2.0;
-    let hot = resp.hovered();
-    let painter = ui.painter();
-    painter.circle_filled(
-        c,
-        r,
-        Color32::from_rgba_unmultiplied(18, 16, 14, if hot { 235 } else { 200 }),
-    );
-    let ring = if hot { ring } else { ring.gamma_multiply(0.7) };
-    painter.circle_stroke(c, r, Stroke::new(2.0_f32, ring));
-    let ink = if hot {
-        Color32::WHITE
-    } else {
-        Color32::from_gray(225)
-    };
-    paint(painter, c, r, ink);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
 impl Boxes {
-    /// The two buttons under the crosshair while a box is in hand: throw
-    /// (an arc ending in an arrowhead) and put it away (a cross), with the
-    /// range between them.
-    pub fn throw_buttons(&self, ctx: &egui::Context) -> Option<ThrowButton> {
+    /// The range and a small hint under the crosshair while a box is in
+    /// hand.
+    pub fn throw_hint(&self, ctx: &egui::Context) {
         if !self.out || self.bench {
-            return None;
+            return;
         }
-        let col = charge_ui(self.current().spec.charge);
-        let mut pressed = None;
-        egui::Area::new(egui::Id::new("throw buttons"))
-            .anchor(Align2::CENTER_CENTER, [0.0, 92.0])
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let cancel = icon_button(ui, Color32::from_gray(150), |p, c, r, ink| {
-                        let d = r * 0.38;
-                        let s = Stroke::new(3.0_f32, ink);
-                        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], s);
-                        p.line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], s);
-                    });
-                    if cancel.clicked() {
-                        pressed = Some(ThrowButton::Cancel);
-                    }
-                    // The range, between the buttons.
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 46.0), Sense::hover());
-                    ui.painter().text(
-                        rect.center(),
-                        Align2::CENTER_CENTER,
-                        format!("{:.0} m", self.range),
-                        FontId::proportional(20.0),
-                        Color32::from_gray(240),
-                    );
-                    let throw = icon_button(ui, col, |p, c, r, ink| {
-                        // An arc rising to the right, ending in an arrowhead.
-                        let s = Stroke::new(3.0_f32, ink);
-                        let rr = r * 0.5;
-                        let centre = c + egui::vec2(0.0, rr * 0.55);
-                        let pts: Vec<Pos2> = (0..=16)
-                            .map(|k| {
-                                let a = std::f32::consts::PI * (1.0 - k as f32 / 16.0 * 0.8);
-                                centre + egui::vec2(a.cos(), -a.sin()) * rr
-                            })
-                            .collect();
-                        let tip = *pts.last().expect("points");
-                        let before = pts[pts.len() - 3];
-                        p.add(egui::Shape::line(pts, s));
-                        let dir = (tip - before).normalized();
-                        let side = egui::vec2(-dir.y, dir.x);
-                        let head = r * 0.3;
-                        p.add(egui::Shape::convex_polygon(
-                            vec![
-                                tip + dir * head * 0.6,
-                                tip - dir * head * 0.6 + side * head * 0.6,
-                                tip - dir * head * 0.6 - side * head * 0.6,
-                            ],
-                            ink,
-                            Stroke::NONE,
-                        ));
-                    });
-                    if throw.clicked() {
-                        pressed = Some(ThrowButton::Throw);
-                    }
-                });
-            });
-        pressed
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("throw hint"),
+        ));
+        let c = ctx.screen_rect().center();
+        painter.text(
+            c + egui::vec2(0.0, 64.0),
+            Align2::CENTER_CENTER,
+            format!("{:.0} m", self.range),
+            FontId::proportional(20.0),
+            charge_ui(self.current().spec.charge),
+        );
+        painter.text(
+            c + egui::vec2(0.0, 86.0),
+            Align2::CENTER_CENTER,
+            "+ / \u{2212} range    click throws",
+            FontId::proportional(12.0),
+            Color32::from_gray(200),
+        );
     }
 }

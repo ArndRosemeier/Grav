@@ -2,9 +2,8 @@
 //!
 //! Keys: WASD walk, Shift sprint, Q/E turn (or look around with the mouse,
 //! right button held), Space jump (push off while drifting), 1-9 take a box
-//! in hand (again: put it away), left / right click more / less range, the
-//! buttons under the crosshair throw or cancel, Tab the box bench, R hold
-//! for stone sense.
+//! in hand (again: put it away), + / - more or less range, left click
+//! throws, Tab the box bench, R hold for stone sense.
 
 mod boxes;
 mod cavern;
@@ -36,12 +35,8 @@ use response::Response;
 use std::collections::HashMap;
 use visuals::Visuals;
 
-/// Holding the left button this long keeps adding range.
+/// Holding + or - this long keeps changing the range.
 const RANGE_REPEAT_AFTER: f32 = 0.35;
-/// A right press shorter than this and moving the mouse less than this
-/// many pixels is a click (otherwise it turned the view).
-const RIGHT_CLICK_SECONDS: f32 = 0.35;
-const RIGHT_CLICK_PIXELS: f32 = 6.0;
 
 struct Game {
     tuning: Tuning,
@@ -53,12 +48,8 @@ struct Game {
     goods: goods::Goods,
     hero: Hero,
     boxes: Boxes,
-    /// Seconds the left button has been held while changing the range.
+    /// Seconds + or - has been held while changing the range.
     range_held: f32,
-    /// A right press in progress: seconds held and pixels the mouse moved.
-    right_press: Option<(f32, f32)>,
-    /// A throw button pressed in last frame's HUD.
-    pressed_button: Option<boxes::ThrowButton>,
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
@@ -129,8 +120,6 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         hero,
         boxes,
         range_held: 0.0,
-        right_press: None,
-        pressed_button: None,
         response,
         visuals,
         waters,
@@ -205,9 +194,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.hero.cam_up
     };
     let hand_now = g.hero.hand(world);
-    // Aim at what is under the mouse (or far along its ray). With a box in
-    // hand, left click adds range and right click takes it away (holding
-    // keeps changing it); the buttons under the crosshair throw or cancel.
+    // Aim at what is under the mouse (or far along its ray).
     let (eye, mut ray) = world.cursor_ray(frame);
     if g.demo.is_some() {
         // No mouse in a verify run: aim ahead of the hero, a little up.
@@ -219,32 +206,20 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let aim_dir = (aim_point - hand_now).normalize_or(g.hero.heading);
     let over_ui = frame.ui.ctx().is_pointer_over_area() || g.boxes.bench;
     let ready_to_throw = g.boxes.out && !g.boxes.bench;
+    // + and - change the range (holding keeps changing it).
     let (step, rate) = (g.tuning.flight.range_step, g.tuning.flight.range_rate);
-    if ready_to_throw && !over_ui {
-        if input.mouse_clicked(MouseButton::Left) {
-            g.boxes.change_range(step);
-            g.range_held = 0.0;
+    for (key, sign) in [(Key::Plus, 1.0), (Key::Minus, -1.0)] {
+        if !ready_to_throw {
+            continue;
         }
-        if input.mouse_down(MouseButton::Left) {
+        if input.pressed(key) {
+            g.boxes.change_range(sign * step);
+            g.range_held = 0.0;
+        } else if input.down(key) {
             g.range_held += dt;
             if g.range_held > RANGE_REPEAT_AFTER {
-                g.boxes.change_range(rate * dt);
+                g.boxes.change_range(sign * rate * dt);
             }
-        }
-    }
-    // The right button also turns the view: a short press that hardly
-    // moves the mouse counts as a click.
-    if input.mouse_clicked(MouseButton::Right) {
-        g.right_press = Some((0.0, 0.0));
-    }
-    if let Some((held, moved)) = g.right_press.as_mut() {
-        *held += dt;
-        *moved += input.mouse_delta().length();
-        if !input.mouse_down(MouseButton::Right) {
-            if *held < RIGHT_CLICK_SECONDS && *moved < RIGHT_CLICK_PIXELS && ready_to_throw {
-                g.boxes.change_range(-step);
-            }
-            g.right_press = None;
         }
     }
     let speed = g.tuning.flight.speed_for(g.boxes.range);
@@ -258,14 +233,11 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             (up_now, g.hero.heading),
         )
     });
-    match g.pressed_button.take() {
-        Some(boxes::ThrowButton::Throw) => {
-            if let Some(a) = &aim {
-                g.boxes.throw(a);
-            }
+    // A left click throws.
+    if let Some(a) = &aim {
+        if input.mouse_clicked(MouseButton::Left) && !over_ui {
+            g.boxes.throw(a);
         }
-        Some(boxes::ThrowButton::Cancel) => g.boxes.out = false,
-        None => {}
     }
     if let Some(demo) = g.demo.as_mut() {
         demo.stumbled |= g.hero.stumble > 0.0;
@@ -413,10 +385,10 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     g.boxes
         .countdowns(ctx, world, frame.width as f32, frame.height as f32);
     g.boxes.bench_window(ctx);
-    g.pressed_button = g.boxes.throw_buttons(ctx);
+    g.boxes.throw_hint(ctx);
     ui.text_styled(
         Anchor::BottomLeft,
-        "WASD walk  Shift sprint  Q/E turn  RMB drag look  1-9 box  LMB/RMB range  Tab bench  R sense",
+        "WASD walk  Shift sprint  Q/E turn  RMB drag look  1-9 box  +/- range  click throw  Tab bench  R sense",
         13.0,
         rgb(200, 200, 200),
     );
