@@ -230,18 +230,6 @@ impl Rock {
     /// Cells of broken rock at `p` (in cell units): the nearest cell's own
     /// number in -1..1, and how far `p` is from the cell's edge.
     fn cells(p: Vec3) -> (f32, f32) {
-        fn hash(x: i32, y: i32, z: i32, k: u32) -> f32 {
-            let mut h = (x as u32).wrapping_mul(0x8da6_b343)
-                ^ (y as u32).wrapping_mul(0xd816_3841)
-                ^ (z as u32).wrapping_mul(0xcb1a_b31f)
-                ^ k.wrapping_mul(0x9e37_79b9);
-            h ^= h >> 15;
-            h = h.wrapping_mul(0x2c1b_3c6d);
-            h ^= h >> 12;
-            h = h.wrapping_mul(0x297a_2d39);
-            h ^= h >> 15;
-            (h & 0xffff) as f32 / 65535.0
-        }
         let base = p.floor();
         let (bx, by, bz) = (base.x as i32, base.y as i32, base.z as i32);
         let (mut d1, mut d2, mut own) = (f32::MAX, f32::MAX, 0.0);
@@ -250,15 +238,15 @@ impl Rock {
                 for dz in -1..=1 {
                     let (x, y, z) = (bx + dx, by + dy, bz + dz);
                     let at = Vec3::new(
-                        x as f32 + hash(x, y, z, 1),
-                        y as f32 + hash(x, y, z, 2),
-                        z as f32 + hash(x, y, z, 3),
+                        x as f32 + Self::lattice(x, y, z, 1),
+                        y as f32 + Self::lattice(x, y, z, 2),
+                        z as f32 + Self::lattice(x, y, z, 3),
                     );
                     let d = at.distance(p);
                     if d < d1 {
                         d2 = d1;
                         d1 = d;
-                        own = hash(x, y, z, 4) * 2.0 - 1.0;
+                        own = Self::lattice(x, y, z, 4) * 2.0 - 1.0;
                     } else if d < d2 {
                         d2 = d;
                     }
