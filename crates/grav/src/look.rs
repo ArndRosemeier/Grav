@@ -384,6 +384,25 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
         // Something glows faintly deep in the cracks.
         lit = glow + crack * 0.12 * plates.x;
     }
+    else {
+        // A soft stem or blade: fibres run its length as fine ribs, it
+        // is dark and tough at the root and thin and pale at the tip,
+        // and it is freckled, bruised and dull in places like anything
+        // that lives.
+        let rib = gv_noise(vec3<f32>(p.x * 95.0, p.y * 1.6, p.z * 95.0));
+        let fine_rib = gv_noise(vec3<f32>(p.x * 240.0 + 3.0, p.y * 4.0, p.z * 240.0));
+        let root = 1.0 - smoothstep(0.0, 0.45, p.y);
+        let freckle = gv_cells(p * 48.0 + 9.0);
+        let spot = smoothstep(0.8, 0.97, freckle.x) * (1.0 - smoothstep(0.1, 0.3, 0.5 - freckle.y));
+        let bruise = smoothstep(0.62, 0.85, gv_fbm3(p * 3.3 + own * 30.0));
+        c = c * (0.72 + 0.4 * rib) * (0.9 + 0.2 * fine_rib);
+        c = mix(c, c * vec3<f32>(0.45, 0.4, 0.5), root * 0.7);
+        c = mix(c, vec3<f32>(0.11, 0.09, 0.05), bruise * 0.4);
+        c = c * (1.0 - 0.55 * spot);
+        rough = clamp(0.5 + 0.25 * rib + 0.3 * bruise + 0.2 * root, 0.0, 0.95);
+        n = normalize(n + (vec3<f32>(rib, 0.5, fine_rib) - 0.5) * vec3<f32>(0.5, 0.0, 0.5));
+        lit = glow * (0.7 + 0.5 * rib);
+    }
     let rim = pow(1.0 - abs(dot(n, normalize(m.view_dir))), 3.0);
     o.color = vec4<f32>(c * (1.0 - 0.5 * clamp(lit, 0.0, 1.0)), 1.0);
     o.normal = n;
