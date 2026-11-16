@@ -18,6 +18,8 @@ of either run: it renders 600 frames, which takes under a minute on a desktop
 GPU and about 25 minutes on a software renderer. Run it when you need it.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -69,6 +71,19 @@ def reason_over_budget(name: str) -> str | None:
     return None
 
 
+def time_alone(exe: str, name: str, env: dict) -> float:
+    """A test run on its own, three times; the fastest run counts (machines are noisy)."""
+    best = float("inf")
+    for _ in range(3):
+        cmd = [exe, "-Z", "unstable-options", "--report-time", "--exact", name]
+        run = subprocess.run(cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in run.stdout.splitlines():
+            m = LINE.match(line)
+            if m and m.group(3):
+                best = min(best, float(m.group(3)) * 1000.0)
+    return best
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--full", action="store_true", help="run every test, not only the essential ones")
@@ -78,7 +93,7 @@ def main() -> int:
     env = dict(os.environ)
     # Lets the stable test runner time each test (--report-time).
     env["RUSTC_BOOTSTRAP"] = "1"
-    results = []  # (name, outcome, ms)
+    results = []  # (name, outcome, ms, exe)
     for exe in test_binaries():
         cmd = [exe, "-Z", "unstable-options", "--report-time"]
         if args.full:
@@ -92,21 +107,26 @@ def main() -> int:
         for line in run.stdout.splitlines():
             m = LINE.match(line)
             if m:
-                results.append((m.group(1), m.group(2), float(m.group(3) or 0) * 1000.0))
+                results.append((m.group(1), m.group(2), float(m.group(3) or 0) * 1000.0, exe))
         if run.returncode != 0:
             print(run.stdout)
 
+    if not args.full:
+        # A test over budget is timed again on its own before it counts as slow.
+        results = [
+            (n, o, time_alone(exe, n, env) if o == "ok" and ms > BUDGET_MS else ms, exe) for n, o, ms, exe in results
+        ]
     failed = [r for r in results if r[1] == "FAILED"]
     ran = [r for r in results if r[1] in ("ok", "FAILED")]
     skipped = sum(1 for r in results if r[1] == "ignored")
     over = []
     if not args.full:
-        for name, _, ms in ran:
+        for name, _, ms, _ in ran:
             if ms > BUDGET_MS:
                 reason = reason_over_budget(name)
                 over.append((name, ms, reason))
 
-    for name, _, ms in sorted(ran, key=lambda r: -r[2])[:5]:
+    for name, _, ms, _ in sorted(ran, key=lambda r: -r[2])[:5]:
         print(f"  {ms:9.1f} ms  {name}")
     kind = "" if args.full else " essential"
     total = sum(r[2] for r in ran)
@@ -122,7 +142,7 @@ def main() -> int:
                 f'mark it #[ignore = "full"], or write `// Over budget: <reason>` above its #[test].',
                 file=sys.stderr,
             )
-    for name, _, _ in failed:
+    for name, _, _, _ in failed:
         print(f"test: FAILED {name}", file=sys.stderr)
     return 1 if failed or bad or not ran else 0
 
