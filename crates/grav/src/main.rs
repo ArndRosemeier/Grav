@@ -14,6 +14,7 @@ mod heart;
 mod hero;
 mod link;
 mod look;
+mod meter;
 mod response;
 mod rock;
 mod settle;
@@ -37,6 +38,8 @@ struct Game {
     tuning: Tuning,
     base: grav_core::Field,
     grass: grass::Grass,
+    scenery: space::Scenery,
+    meter: meter::Meter,
     hero: Hero,
     inv: Inventory,
     response: Response,
@@ -78,9 +81,9 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ground: PhysicsGround::None,
         ..PhysicsSettings::default()
     })?;
-    let blades = space::build_rock(world, &look)?;
+    let scenery = space::build_rock(world, &look)?;
     let base = space::base_field();
-    let grass = grass::Grass::new(world, look.flora, &blades, &base)?;
+    let grass = grass::Grass::new(world, look.flora, &scenery.blades, &base)?;
     // Nothing is built here yet (the stand-in town was torn down).
     let built = space::Built::default();
     let (at, _) = space::spire_frame(0.0, -75.0);
@@ -95,11 +98,15 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     link::install(world, &base, HashMap::new());
     let tour = shots::Tour::from_env();
     // The scripted run opens stones; the screenshot tour wants the world alone.
-    let demo = (std::env::var("ENGINE_VERIFY").is_ok() && tour.is_none()).then(Demo::default);
+    let meter = meter::Meter::new();
+    let demo = (std::env::var("ENGINE_VERIFY").is_ok() && tour.is_none() && !meter.measuring())
+        .then(Demo::default);
     Ok(Game {
         tuning,
         base,
         grass,
+        scenery,
+        meter,
         hero,
         inv,
         response,
@@ -330,8 +337,10 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     // --- HUD ---
     match g.tour.as_mut() {
         Some(tour) => tour.frame(world),
+        None if g.meter.measuring() => {}
         None => hud(g, world, frame),
     }
+    g.meter.frame(world, frame, &mut g.grass, &g.scenery)?;
 
     // --- Self-checks ---
     world.check(

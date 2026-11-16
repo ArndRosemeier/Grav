@@ -1,0 +1,11 @@
+@echo off
+rem Measures the frame rate from five fixed views and what each part of the
+rem world costs. Takes about a minute and a half. The result is shown in the
+rem window and written to measure.txt.
+cd /d %~dp0
+git pull
+set GRAV_MEASURE=1
+cargo run --release -p grav
+echo.
+type measure.txt
+pause

@@ -93,9 +93,39 @@ pub fn place(at: Vec3, rot: Quat) -> Place {
 
 /// The dead stone: spire, outer wall, island and the far spires, each with
 /// its solid shape from the same mesh that is drawn.
-pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Vec<crate::grass::Blade>> {
+/// What `build_rock` put into the world, kept so parts of it can be
+/// taken away and put back (for measuring what each costs).
+pub struct Scenery {
+    pub blades: Vec<crate::grass::Blade>,
+    pub plants: Vec<(LodId, Vec<Place>)>,
+    pub built: Vec<(LodId, Vec<Place>)>,
+    pub cavern: Vec<(LodId, Vec<Place>)>,
+}
+
+impl Scenery {
+    /// Draw one of the parts or not.
+    pub fn show(
+        &self,
+        world: &mut World,
+        part: &[(LodId, Vec<Place>)],
+        on: bool,
+    ) -> EngineResult<()> {
+        for (set, places) in part {
+            world.set_lod_places(*set, if on { places } else { &[] })?;
+        }
+        Ok(())
+    }
+}
+
+pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
     let heart_dir = HEART_CENTER.normalize();
     let (pieces, stands, blades) = rock::build_all(rock::shared(), heart_dir)?;
+    let mut scenery = Scenery {
+        blades,
+        plants: Vec::new(),
+        built: Vec::new(),
+        cavern: Vec::new(),
+    };
     // What grows on it: each shape of each kind once, drawn wherever one
     // stands, lighter with distance.
     for stand in stands {
@@ -111,6 +141,11 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Vec<crate::gra
         }
         // What is drawn is what collides: the same shape, plain, unseen,
         // once for each place (only where the hero can come).
+        let part = match stand.stuff {
+            Stuff::Flora => &mut scenery.plants,
+            Stuff::Built => &mut scenery.built,
+        };
+        part.push((set, stand.places.clone()));
         let Some(solid) = stand.solid else { continue };
         for place in &stand.places {
             if place.position.truncate().length() > 420.0 {
@@ -147,8 +182,9 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Vec<crate::gra
             world.set_custom_material(level, material)?;
             world.set_casts_shadow(level, false)?;
         }
+        scenery.cavern.push((set, piece.places));
     }
-    Ok(blades)
+    Ok(scenery)
 }
 
 /// A frame standing on the spire's surface at `angle_deg` around the axis

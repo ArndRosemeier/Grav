@@ -43,6 +43,7 @@ struct Patch {
 
 pub struct Grass {
     patches: Vec<Patch>,
+    hidden: bool,
 }
 
 /// A clump of stalks along +y: each a thin straight wire, dark at the
@@ -143,7 +144,10 @@ impl Grass {
                 bent: false,
             });
         }
-        Ok(Self { patches })
+        Ok(Self {
+            patches,
+            hidden: false,
+        })
     }
 
     /// How many clumps stand.
@@ -151,9 +155,23 @@ impl Grass {
         self.patches.iter().map(|p| p.blades.len()).sum()
     }
 
+    /// Draw the grass or not (for measuring what it costs).
+    pub fn show(&mut self, world: &mut World, on: bool) -> EngineResult<()> {
+        self.hidden = !on;
+        for patch in &mut self.patches {
+            world.set_instances(patch.fine, &[])?;
+            world.set_instances(patch.light, &[])?;
+            patch.shown = 3;
+        }
+        Ok(())
+    }
+
     /// Each frame: draw the patches near `eye`, and turn the stalks in
     /// reach of an open stone to `field`.
     pub fn update(&mut self, world: &mut World, field: &Field, eye: Vec3) -> EngineResult<()> {
+        if self.hidden {
+            return Ok(());
+        }
         for patch in &mut self.patches {
             let d = patch.center.distance(eye);
             // A little slack, so a patch on the line does not flicker.

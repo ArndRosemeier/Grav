@@ -349,6 +349,37 @@ fn growth_views() -> Vec<View> {
     views
 }
 
+/// A fixed view for the measuring tour (meter.rs).
+pub struct Spot {
+    pub name: &'static str,
+    pub eye: Vec3,
+    pub target: Vec3,
+    pub up: Vec3,
+}
+
+/// The views frame times are measured from: the street, the town from
+/// above, the wide view, the dwarven wall, the cavern.
+pub fn measure_views() -> Vec<Spot> {
+    let wanted = [
+        "street towards the heart",
+        "street from above",
+        "vista: from the wall along the spire",
+        "wall close up",
+        "the cavern, across from above the town",
+    ];
+    let all = views();
+    wanted
+        .iter()
+        .filter_map(|name| all.iter().find(|v| v.name == *name))
+        .map(|v| Spot {
+            name: v.name,
+            eye: v.eye,
+            target: v.target,
+            up: v.up,
+        })
+        .collect()
+}
+
 const GRASS_STONE: &str = "grass: around an open stone";
 
 /// Where the tour's open stone hangs for the grass views, and up there.
