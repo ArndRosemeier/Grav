@@ -5,8 +5,8 @@ use crate::space::place;
 use engine::glam::Vec2;
 use engine::prelude::*;
 use grav_core::{
-    can_walk, climb_slope_deg, fall_damage, jump_speed, slide_step, walk_accel, walk_speed_in,
-    Movement, G,
+    can_walk, climb_slope_deg, fall_damage, jump_speed, one_g, slide_step, walk_accel,
+    walk_speed_in, Movement,
 };
 
 pub struct Hero {
@@ -76,7 +76,7 @@ impl Hero {
                 .mass(70.0)
                 .up(CharacterUp::Field {
                     turn_deg_per_s: m.turn_deg_per_s,
-                    drift_below: m.drift_below_g * G,
+                    drift_below: m.drift_below_g * one_g(),
                 }),
         )?;
         let mut mesh = Shape::box_at((0.0, 0.62, 0.0), (0.56, 0.95, 0.36), rgb(150, 70, 48))?;
@@ -210,7 +210,7 @@ impl Hero {
         self.heading = h;
         let right = self.heading.cross(self.cam_up);
 
-        self.pull_g = s.gravity.length() / G;
+        self.pull_g = s.gravity.length() / one_g();
         // P4: in light pull he climbs steeper, in heavy pull less.
         world.set_character_max_slope(self.id, climb_slope_deg(m, self.pull_g))?;
         self.drifting = self.pull_g < m.drift_below_g;
@@ -229,7 +229,7 @@ impl Hero {
 
         // P12: a sudden change of pull yanks him and makes him stumble.
         let calm = self.calm_pull.get_or_insert(s.gravity);
-        let jolted = (s.gravity - *calm).length() > m.stumble_change_g * G;
+        let jolted = (s.gravity - *calm).length() > m.stumble_change_g * one_g();
         *calm = calm.lerp(s.gravity, (dt / m.jolt_window.max(dt)).min(1.0));
         if jolted && s.grounded {
             self.stumble = m.stumble_seconds;

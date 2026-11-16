@@ -244,7 +244,7 @@ mod tests {
         let p = at + rot * Vec3::new(0.0, 0.5, 0.0);
         let a = field.acceleration(&BodyQuery::at(p));
         let toward_rock = -(rot * Vec3::Y);
-        assert!(a.dot(toward_rock) > 0.2 * grav_core::G, "{a}");
+        assert!(a.dot(toward_rock) > 0.2 * grav_core::one_g(), "{a}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The hero's body rules under attraction (P4 to P7).
 
-use crate::G;
+use crate::one_g;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ pub struct Movement {
     pub walk_speed: f32,
     /// Jump height under Earth's gravity, metres (P6): sets the constant
     /// jump impulse, so he jumps 1 / pull as high (twice this at 1 g, which
-    /// is half of Earth's: see `G`).
+    /// is half of Earth's: see `one_g`).
     pub jump_height_on_earth: f32,
     /// Impact speed below which a fall does no harm, m/s (P7).
     pub safe_impact: f32,
@@ -124,14 +124,16 @@ pub fn climb_slope_deg(m: &Movement, pull_g: f32) -> f32 {
 /// braces against, as a share of the press onto it. It holds exactly up to
 /// the slope he can climb.
 pub fn grip(m: &Movement, accel: Vec3) -> f32 {
-    climb_slope_deg(m, accel.length() / G).to_radians().tan()
+    climb_slope_deg(m, accel.length() / one_g())
+        .to_radians()
+        .tan()
 }
 
 /// P4: whether the field `accel` presses the hero onto a surface with
 /// normal `normal` hard enough, at a gentle enough slope, to walk.
 pub fn can_walk(m: &Movement, accel: Vec3, normal: Vec3) -> bool {
     let (press, _) = press_and_drag(accel, normal);
-    press >= m.walk_min_g * G && footing_holds(grip(m, accel), accel, normal)
+    press >= m.walk_min_g * one_g() && footing_holds(grip(m, accel), accel, normal)
 }
 
 /// The pull split against a surface with normal `normal`: how hard it
@@ -182,10 +184,10 @@ pub fn slide_step(m: &Movement, accel: Vec3, normal: Vec3, v: Vec3, dt: f32) -> 
 /// pull and with it.
 pub fn walk_speed_in(m: &Movement, accel: Vec3, normal: Vec3, dir: Vec3) -> f32 {
     let (press, drag) = press_and_drag(accel, normal);
-    let weight = (press.max(1e-3) / G)
+    let weight = (press.max(1e-3) / one_g())
         .powf(-m.weight_speed_exp)
         .clamp(m.weight_speed_min, m.weight_speed_max);
-    let along = (1.0 + m.walk_pull_gain * drag.dot(dir) / G).clamp(0.25, 1.75);
+    let along = (1.0 + m.walk_pull_gain * drag.dot(dir) / one_g()).clamp(0.25, 1.75);
     m.walk_speed * weight * along
 }
 
@@ -193,7 +195,7 @@ pub fn walk_speed_in(m: &Movement, accel: Vec3, normal: Vec3, dir: Vec3) -> f32 
 /// pull, floaty in light pull.
 pub fn walk_accel(m: &Movement, accel: Vec3, normal: Vec3) -> f32 {
     let (press, _) = press_and_drag(accel, normal);
-    m.move_accel * (press.max(0.0) / G).clamp(0.1, 3.0)
+    m.move_accel * (press.max(0.0) / one_g()).clamp(0.1, 3.0)
 }
 
 #[cfg(test)]
@@ -204,9 +206,9 @@ mod tests {
     fn jump_height_scales_with_one_over_pull() {
         let m = Movement::default();
         let v = jump_speed(&m);
-        let h = |g: f32| v * v / (2.0 * g * G);
+        let h = |g: f32| v * v / (2.0 * g * one_g());
         // 1.2 m on Earth; 1 g here is half of that.
-        let at_1g = 1.2 * crate::EARTH_G / G;
+        let at_1g = 1.2 * crate::EARTH_G / one_g();
         assert!((h(1.0) - at_1g).abs() < 1e-3);
         assert!((h(0.4) - at_1g / 0.4).abs() < 1e-2);
         assert!((h(2.0) - at_1g / 2.0).abs() < 1e-3);
@@ -224,11 +226,11 @@ mod tests {
     fn walking_needs_press_and_a_gentle_slope() {
         let m = Movement::default();
         // On a ceiling with down pointing up into it: walkable.
-        assert!(can_walk(&m, Vec3::Y * G, Vec3::NEG_Y));
+        assert!(can_walk(&m, Vec3::Y * one_g(), Vec3::NEG_Y));
         // Too weak.
-        assert!(!can_walk(&m, Vec3::NEG_Y * 0.1 * G, Vec3::Y));
+        assert!(!can_walk(&m, Vec3::NEG_Y * 0.1 * one_g(), Vec3::Y));
         // A wall when down is straight down: too steep.
-        assert!(!can_walk(&m, Vec3::NEG_Y * G, Vec3::X));
+        assert!(!can_walk(&m, Vec3::NEG_Y * one_g(), Vec3::X));
     }
 
     #[test]
@@ -242,16 +244,16 @@ mod tests {
             Vec3::new(a.sin(), a.cos(), 0.0)
         };
         // 1 g straight down on a 45 degree slope: walkable; 55: not.
-        assert!(can_walk(&m, Vec3::NEG_Y * G, slope(45.0)));
-        assert!(!can_walk(&m, Vec3::NEG_Y * G, slope(55.0)));
+        assert!(can_walk(&m, Vec3::NEG_Y * one_g(), slope(45.0)));
+        assert!(!can_walk(&m, Vec3::NEG_Y * one_g(), slope(55.0)));
         // The same 55 degree slope in 0.3 g: walkable.
-        assert!(can_walk(&m, Vec3::NEG_Y * 0.3 * G, slope(55.0)));
+        assert!(can_walk(&m, Vec3::NEG_Y * 0.3 * one_g(), slope(55.0)));
     }
 
     #[test]
     fn a_slide_needs_a_slope_beyond_the_grip_and_dies_on_level_rock() {
         let m = Movement::default();
-        let down = Vec3::NEG_Y * G;
+        let down = Vec3::NEG_Y * one_g();
         let slope = |deg: f32| {
             let a = deg.to_radians();
             Vec3::new(-a.sin(), a.cos(), 0.0)
@@ -290,15 +292,16 @@ mod tests {
     fn heavy_is_slow_light_is_fast_and_the_pull_helps_or_hinders() {
         let m = Movement::default();
         let n = Vec3::Y;
-        let at = |g: f32| walk_speed_in(&m, Vec3::NEG_Y * g * G, n, Vec3::X);
+        let at = |g: f32| walk_speed_in(&m, Vec3::NEG_Y * g * one_g(), n, Vec3::X);
         assert!((at(1.0) - m.walk_speed).abs() < 1e-4);
         assert!(at(1.8) < at(1.0) * 0.8 && at(0.4) > at(1.0) * 1.4);
-        let leaning = Vec3::new(0.2, -0.98, 0.0) * G;
+        let leaning = Vec3::new(0.2, -0.98, 0.0) * one_g();
         let with = walk_speed_in(&m, leaning, n, Vec3::X);
         let against = walk_speed_in(&m, leaning, n, Vec3::NEG_X);
         assert!(with > m.walk_speed * 1.15 && against < m.walk_speed * 0.85);
         assert!(
-            walk_accel(&m, Vec3::NEG_Y * 0.4 * G, n) < walk_accel(&m, Vec3::NEG_Y * G, n) * 0.5
+            walk_accel(&m, Vec3::NEG_Y * 0.4 * one_g(), n)
+                < walk_accel(&m, Vec3::NEG_Y * one_g(), n) * 0.5
         );
     }
 }

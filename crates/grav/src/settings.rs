@@ -23,6 +23,8 @@ pub struct Prefs {
     pub show_pull: bool,
     /// The line of controls at the bottom.
     pub show_controls: bool,
+    /// What "1 g" means, m/s² (grav_core::one_g): to find what plays well.
+    pub one_g: f32,
 }
 
 impl Default for Prefs {
@@ -34,6 +36,7 @@ impl Default for Prefs {
             invert_look: false,
             show_pull: true,
             show_controls: true,
+            one_g: grav_core::DEFAULT_ONE_G,
         }
     }
 }
@@ -62,6 +65,7 @@ impl SettingsUi {
     fn apply(&self, world: &mut World) {
         world.set_quality(Quality::from_name(&self.prefs.quality).unwrap_or_default());
         world.set_vsync(self.prefs.vsync);
+        grav_core::set_one_g(self.prefs.one_g);
     }
 
     fn save(&self) {
@@ -134,6 +138,30 @@ impl SettingsUi {
                     ui.end_row();
                     ui.label("Vertical sync");
                     ui.checkbox(&mut p.vsync, "");
+                    ui.end_row();
+                });
+            heading(ui, "World");
+            egui::Grid::new("world")
+                .num_columns(2)
+                .spacing([16.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("1 g is")
+                        .on_hover_text("Every pull in g scales with this. Earth's is 9.81.");
+                    ui.add(
+                        egui::Slider::new(&mut p.one_g, 1.0..=12.0)
+                            .fixed_decimals(2)
+                            .suffix(" m/s²"),
+                    );
+                    ui.end_row();
+                    ui.label("");
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{:.0}% of Earth's",
+                            p.one_g / grav_core::EARTH_G * 100.0
+                        ))
+                        .size(12.0)
+                        .color(Color32::from_gray(150)),
+                    );
                     ui.end_row();
                 });
             heading(ui, "Controls");

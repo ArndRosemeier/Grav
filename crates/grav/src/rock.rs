@@ -783,7 +783,7 @@ impl Rock {
             ground.at[i] = p;
             ground.potential[i] = field.vein_potential(p);
             let pull = field.acceleration(&grav_core::BodyQuery::at(p + out * 0.05));
-            let g = pull.length() / grav_core::G;
+            let g = pull.length() / grav_core::one_g();
             ground.pull[i] = g;
             ground.up[i] = if g > 0.02 { -pull.normalize() } else { out };
         };
@@ -1319,7 +1319,7 @@ mod tests {
             };
             let at = (pair[0] + pair[1]) * 0.5 + up;
             let pull = field.acceleration(&grav_core::BodyQuery::at(at));
-            assert!(pull.length() > 0.5 * grav_core::G, "no pull at {at}");
+            assert!(pull.length() > 0.5 * grav_core::one_g(), "no pull at {at}");
             let lean = pull.normalize().dot(along).abs().asin().to_degrees();
             worst = worst.max(lean);
             assert!(lean < 12.0, "the pull leans {lean} degrees at {at}");

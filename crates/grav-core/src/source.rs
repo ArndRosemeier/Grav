@@ -1,7 +1,7 @@
 //! One open stone as the field sees it: where it is and what it does.
 
+use crate::one_g;
 use crate::profile::{Profile, Selectivity, TimeDial};
-use crate::G;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -134,7 +134,7 @@ impl Source {
             * self.max_g.max(0.0)
             * self.opening.clamp(0.0, 1.0)
             * self.time.factor(self.open_seconds)
-            * G
+            * one_g()
     }
 
     /// Whether this source produces any field at all.
@@ -180,7 +180,7 @@ mod tests {
         let half = s.acceleration(Vec3::new(3.0, 0.0, 0.0), 80.0);
         assert!((half * 2.0 - full).length() < 1e-5);
         // Core at x = 0.2: 1.5 g * 0.8, towards the stone.
-        assert!((full.x + 1.5 * 0.8 * G).abs() < 1e-4);
+        assert!((full.x + 1.5 * 0.8 * one_g()).abs() < 1e-4);
     }
 
     #[test]
@@ -188,7 +188,7 @@ mod tests {
         let s = Source::new(2, Charge::Repelling, Vec3::ZERO, 1.0, 10.0);
         let a = s.acceleration(Vec3::new(0.0, 5.0, 0.0), 1.0);
         assert!(a.y > 0.0);
-        assert!((a.y - 0.5 * G).abs() < 1e-4);
+        assert!((a.y - 0.5 * one_g()).abs() < 1e-4);
     }
 
     #[test]

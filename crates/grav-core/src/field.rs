@@ -1,8 +1,8 @@
 //! The total attraction field: veins, the heart and all open stones (A6).
 
+use crate::one_g;
 use crate::source::{Charge, Source, SourceId};
 use crate::vein::Vein;
-use crate::G;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,7 @@ impl Heart {
         if r < 1e-3 {
             return Vec3::ZERO;
         }
-        d / r * self.push_g(r) * G
+        d / r * self.push_g(r) * one_g()
     }
 
     /// The flare's push at `p` in m/s², before the cap of H11.
@@ -53,7 +53,7 @@ impl Heart {
         if r < 1e-3 || self.flare_g <= 0.0 {
             return Vec3::ZERO;
         }
-        d / r * self.flare_g * G
+        d / r * self.flare_g * one_g()
     }
 }
 
@@ -292,7 +292,7 @@ mod tests {
         let f = district();
         // In the hold zone: down is the vein alone (A7).
         let a = f.acceleration(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0)));
-        assert!((a - Vec3::NEG_Y * G).length() < 1e-3, "{a}");
+        assert!((a - Vec3::NEG_Y * one_g()).length() < 1e-3, "{a}");
         // Halfway through the fade band: half vein, half heart push.
         let parts = f.parts(&BodyQuery::at(Vec3::new(0.0, 85.0, 0.0)));
         assert!((parts.vein_hold - 0.5).abs() < 1e-4);
@@ -301,7 +301,7 @@ mod tests {
         let p = f.parts(&BodyQuery::at(Vec3::new(0.0, 200.0, 0.0)));
         assert_eq!(p.veins, Vec3::ZERO);
         let r: f32 = 4800.0;
-        let expect = (0.3 + (0.02 - 0.3) * (r - 3000.0) / 6000.0) * G;
+        let expect = (0.3 + (0.02 - 0.3) * (r - 3000.0) / 6000.0) * one_g();
         assert!((p.heart.length() - expect).abs() < 1e-3);
     }
 
@@ -315,14 +315,14 @@ mod tests {
         heart.center = Vec3::new(0.0, -5000.0, 0.0);
         heart.flare_g = 0.8;
         let town = f.parts(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0)));
-        assert!(town.heart.length() > 0.4 * G, "it gets through");
+        assert!(town.heart.length() > 0.4 * one_g(), "it gets through");
         assert!(town.heart.length() <= 0.5 * town.veins.length() + 1e-3);
         assert!(f.acceleration(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0))).y < 0.0);
         let mut wild = f.clone();
         wild.veins[0].inhabited = false;
         let free = wild.parts(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0)));
         assert!(
-            (free.heart.length() - 0.8 * G).abs() < 1e-3,
+            (free.heart.length() - 0.8 * one_g()).abs() < 1e-3,
             "uninhabited: full"
         );
     }
@@ -389,7 +389,7 @@ mod tests {
             source: None,
         });
         let a = f.acceleration(&q);
-        assert!((a - Vec3::Y * G).length() < 1e-3, "{a}");
+        assert!((a - Vec3::Y * one_g()).length() < 1e-3, "{a}");
     }
 
     #[test]

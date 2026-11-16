@@ -34,7 +34,7 @@ mod wet;
 
 use boxes::Boxes;
 use engine::prelude::*;
-use grav_core::{BodyQuery, BoxState, Charge, Face, FieldParts, Program, Tuning, G};
+use grav_core::{one_g, BodyQuery, BoxState, Charge, Face, FieldParts, Program, Tuning};
 use hero::{Hero, HeroInput};
 use movable::Movable;
 use response::Response;
@@ -451,10 +451,10 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
 fn pull_readout(g: &Game, ui: &UiFrame, pull: Vec3, state: &str) {
     ui.text(
         Anchor::TopRight,
-        format!("Pull {:.2} g, {state}", pull.length() / G),
+        format!("Pull {:.2} g, {state}", pull.length() / one_g()),
     );
     // Where it comes from: the rock's vein, open boxes, the heart.
-    let part = |v: Vec3| v.length() / G;
+    let part = |v: Vec3| v.length() / one_g();
     let mut from = format!("rock {:.2}", part(g.pull.veins));
     if g.pull.stones != Vec3::ZERO {
         from += &format!("  boxes {:.2}", part(g.pull.stones));

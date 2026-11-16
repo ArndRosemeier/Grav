@@ -4,7 +4,7 @@
 
 use crate::space::{hidden, place};
 use engine::prelude::*;
-use grav_core::{BodyQuery, Field, G};
+use grav_core::{one_g, BodyQuery, Field};
 
 const DUST: usize = 700;
 const DUST_BOX: f32 = 14.0;
@@ -109,7 +109,7 @@ impl Visuals {
                 for z in -SENSE_HALF..=SENSE_HALF {
                     let p = snap + Vec3::new(x as f32, y as f32, z as f32) * SENSE_STEP;
                     let a = field.acceleration(&BodyQuery::at(p));
-                    let g = a.length() / G;
+                    let g = a.length() / one_g();
                     if g < 0.01 {
                         continue;
                     }
@@ -145,7 +145,7 @@ impl Visuals {
     pub fn preview(&mut self, world: &mut World, show: Option<(Vec3, Vec3)>) -> EngineResult<()> {
         match show {
             Some((hero_center, fall)) => {
-                let g = fall.length() / G;
+                let g = fall.length() / one_g();
                 if g > 0.01 {
                     let rot = Quat::from_rotation_arc(Vec3::Z, fall / fall.length());
                     world.set_place(

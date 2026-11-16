@@ -9,7 +9,7 @@
 //! on every collapse; the falling pieces themselves are physics bodies the
 //! game makes.
 
-use crate::G;
+use crate::one_g;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -138,7 +138,7 @@ impl Structure {
     /// broken neighbours put on it.
     pub fn load_g(&self, id: PieceId, field: Vec3, resting_g: f32) -> f32 {
         let p = self.piece(id);
-        (field - p.design).length() / G + resting_g.max(0.0) + p.carried_g
+        (field - p.design).length() / one_g() + resting_g.max(0.0) + p.carried_g
     }
 
     /// One fixed step. `field(id)` is the acceleration at the piece now;
@@ -241,7 +241,7 @@ mod tests {
     /// A column of `n` pieces on an anchored foundation, built for 1 g down.
     fn column(n: usize, bond_g: f32) -> (Structure, Vec<PieceId>) {
         let mut s = Structure::new();
-        let down = Vec3::NEG_Y * G;
+        let down = Vec3::NEG_Y * one_g();
         let mut ids = vec![s.add(BondClass::Masonry, bond_g, down, true)];
         for _ in 1..n {
             let id = s.add(BondClass::Masonry, bond_g, down, false);
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn the_field_it_was_built_for_loads_nothing() {
         let (mut s, _) = column(4, 1.5);
-        let r = s.step(|_| Vec3::NEG_Y * G, |_| 0.0);
+        let r = s.step(|_| Vec3::NEG_Y * one_g(), |_| 0.0);
         assert!(r.broken.is_empty() && r.warning.is_empty());
     }
 
@@ -265,9 +265,9 @@ mod tests {
         // 0.7 g sideways on the top piece: warning.
         let r = s.step(
             |id| {
-                Vec3::NEG_Y * G
+                Vec3::NEG_Y * one_g()
                     + if id == top {
-                        Vec3::X * 0.7 * G
+                        Vec3::X * 0.7 * one_g()
                     } else {
                         Vec3::ZERO
                     }
@@ -279,9 +279,9 @@ mod tests {
         // 1.2 g: it breaks.
         let r = s.step(
             |id| {
-                Vec3::NEG_Y * G
+                Vec3::NEG_Y * one_g()
                     + if id == top {
-                        Vec3::X * 1.2 * G
+                        Vec3::X * 1.2 * one_g()
                     } else {
                         Vec3::ZERO
                     }
@@ -297,9 +297,9 @@ mod tests {
         let (mut s, ids) = column(5, 1.0);
         let r = s.step(
             |id| {
-                Vec3::NEG_Y * G
+                Vec3::NEG_Y * one_g()
                     + if id == ids[1] {
-                        Vec3::X * 2.0 * G
+                        Vec3::X * 2.0 * one_g()
                     } else {
                         Vec3::ZERO
                     }
@@ -316,7 +316,7 @@ mod tests {
     fn load_passes_on_and_spreads_over_steps() {
         // A row of five anchored wall pieces bonded side by side.
         let mut s = Structure::new();
-        let down = Vec3::NEG_Y * G;
+        let down = Vec3::NEG_Y * one_g();
         let ids: Vec<PieceId> = (0..5)
             .map(|_| s.add(BondClass::Timber, 0.8, down, true))
             .collect();
@@ -326,7 +326,7 @@ mod tests {
         // A stone next to the middle piece: 0.9 g extra there, 0.5 g next to it.
         let field = |id: PieceId| {
             let k = (id.0 as i32 - 2).abs();
-            down + Vec3::X * G * [0.9, 0.5, 0.1][k as usize]
+            down + Vec3::X * one_g() * [0.9, 0.5, 0.1][k as usize]
         };
         let r1 = s.step(field, |_| 0.0);
         assert_eq!(r1.broken, vec![ids[2]]);
@@ -345,7 +345,7 @@ mod tests {
     fn resting_loose_bodies_add_load() {
         let (mut s, ids) = column(2, 1.0);
         let r = s.step(
-            |_| Vec3::NEG_Y * G,
+            |_| Vec3::NEG_Y * one_g(),
             |id| if id == ids[1] { 1.1 } else { 0.0 },
         );
         assert_eq!(r.broken, vec![ids[1]]);

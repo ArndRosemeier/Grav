@@ -17,7 +17,7 @@
 //! the rest.
 
 use engine::prelude::*;
-use grav_core::{footing_holds, BodyQuery, Field, G, ROCK_FRICTION};
+use grav_core::{footing_holds, one_g, BodyQuery, Field, ROCK_FRICTION};
 
 /// A kind of thing a pull can move, as many of it as there are.
 pub trait Movable {
@@ -47,7 +47,7 @@ pub fn held(field: &Field, base: &Field, at: Vec3, grip: impl Fn(Vec3) -> f32) -
     let now = field.acceleration(&BodyQuery::at(at));
     if own.length() < 1e-3 {
         // No ground to speak of (nothing stands where nothing pulls).
-        return now.length() > 0.05 * G;
+        return now.length() > 0.05 * one_g();
     }
     !footing_holds(grip(now), now, -own.normalize())
 }

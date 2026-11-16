@@ -1,7 +1,7 @@
 //! Veins: natural attracting lodestone in dead stone, the "down" of a
 //! district (A16, A17, R1 to R6).
 
-use crate::G;
+use crate::one_g;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -200,7 +200,7 @@ impl Vein {
         }
         let dir = (q - p) / d;
         (
-            dir * self.surface_g * self.health.clamp(0.0, 1.0) * share * G,
+            dir * self.surface_g * self.health.clamp(0.0, 1.0) * share * one_g(),
             share,
         )
     }
@@ -280,10 +280,10 @@ mod tests {
         let v = slab();
         let (a, s) = v.pull(Vec3::new(0.0, 10.0, 0.0));
         assert_eq!(s, 1.0);
-        assert!((a - Vec3::NEG_Y * G).length() < 1e-4);
+        assert!((a - Vec3::NEG_Y * one_g()).length() < 1e-4);
         let (a, s) = v.pull(Vec3::new(0.0, 85.0, 0.0));
         assert!((s - 0.5).abs() < 1e-5);
-        assert!((a.y + 0.5 * G).abs() < 1e-4);
+        assert!((a.y + 0.5 * one_g()).abs() < 1e-4);
         assert_eq!(v.pull(Vec3::new(0.0, 120.0, 0.0)).0, Vec3::ZERO);
     }
 
@@ -295,7 +295,7 @@ mod tests {
             let slope = (v.potential(Vec3::new(0.0, y + h, 0.0))
                 - v.potential(Vec3::new(0.0, y - h, 0.0)))
                 / (2.0 * h);
-            let pull = v.pull(Vec3::new(0.0, y, 0.0)).0.y / G;
+            let pull = v.pull(Vec3::new(0.0, y, 0.0)).0.y / one_g();
             assert!((slope + pull).abs() < 2e-3, "at {y}: {slope} and {pull}");
         }
     }

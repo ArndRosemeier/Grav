@@ -54,11 +54,34 @@ pub fn upright(up: Vec3, toward: Vec3) -> Quat {
     facing(up, along_ground(toward, up))
 }
 
+/// What "1 g" means in this world by default, in m/s²: half of Earth's
+/// (Arnd, 2026-11-16: walking felt too heavy).
+pub const DEFAULT_ONE_G: f32 = EARTH_G * 0.5;
+
+static ONE_G_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 /// What "1 g" means in this world, in m/s². Pull strengths in the design
-/// are given in g, and every pull, press and fall scales with this. It is
-/// half of Earth's (Arnd, 2026-11-16: walking felt too heavy); change it
-/// here and only here.
-pub const G: f32 = EARTH_G * 0.5;
+/// are given in g, and every pull, press and fall scales with this. The
+/// player can change it in the settings (`set_one_g`) to find what plays
+/// well; everything reads it here, so nothing keeps its own copy.
+pub fn one_g() -> f32 {
+    let bits = ONE_G_BITS.load(std::sync::atomic::Ordering::Relaxed);
+    if bits == 0 {
+        DEFAULT_ONE_G
+    } else {
+        f32::from_bits(bits)
+    }
+}
+
+/// Set what "1 g" means (m/s², kept within 0.5 to 20).
+pub fn set_one_g(metres_per_s2: f32) {
+    let v = if metres_per_s2.is_finite() {
+        metres_per_s2.clamp(0.5, 20.0)
+    } else {
+        DEFAULT_ONE_G
+    };
+    ONE_G_BITS.store(v.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
 
 /// Earth's gravity, m/s²: what bodies are built for. The hero's legs push
 /// off as hard as on Earth, so in a lighter g he jumps higher.
