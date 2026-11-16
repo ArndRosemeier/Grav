@@ -398,6 +398,40 @@ fn growth_views() -> Vec<View> {
             zoom: false,
         });
     }
+    // The people: standing in each street, looking along it.
+    let rock = crate::rock::shared();
+    let field = space::base_field();
+    let ring = |metres: f32| {
+        let angle = 50.0_f32.to_radians() + metres / crate::rock::RING_ROAD;
+        rock.flare_at(angle, crate::rock::RING_ROAD)
+    };
+    let streets = [
+        (
+            "people: on the umbral road",
+            Some(space::spire_frame(0.0, -34.0).0),
+            Some(space::spire_frame(0.0, -16.0).0),
+        ),
+        (
+            "people: in the dwarven lane",
+            Some(space::wall_frame(186.0, 0.5).0),
+            Some(space::wall_frame(204.0, 0.0).0),
+        ),
+        ("people: by the goblin camp", ring(-13.0), ring(3.0)),
+    ];
+    for (name, from, to) in streets {
+        let (Some(from), Some(to)) = (from, to) else {
+            continue;
+        };
+        let pull = field.acceleration(&grav_core::BodyQuery::at(from));
+        let up = (-pull).normalize_or(Vec3::Y);
+        views.push(View {
+            name,
+            eye: from + up * 1.5,
+            target: to + up * 1.0,
+            up,
+            zoom: false,
+        });
+    }
     views
 }
 

@@ -16,6 +16,7 @@ mod hero;
 mod link;
 mod look;
 mod meter;
+mod people;
 mod pieces;
 mod response;
 mod rock;
@@ -46,6 +47,7 @@ struct Game {
     meter: meter::Meter,
     town: town::Town,
     goods: goods::Goods,
+    people: people::People,
     hero: Hero,
     boxes: Boxes,
     /// Seconds + or - has been held while changing the range.
@@ -117,6 +119,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         meter,
         town,
         goods,
+        people: people::People::new(),
         hero,
         boxes,
         range_held: 0.0,
@@ -277,6 +280,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.town
         .update(world, &mut g.response, &field, &g.base, &g.tuning, dt)?;
     g.goods.update(world, &field)?;
+    g.people.update(world, &field, &g.base, dt)?;
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
 
@@ -350,6 +354,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("buildings_asleep_again", g.town.slept);
     world.report("buildings", g.town.count().0);
     world.report("goods", g.goods.count());
+    world.report("people", g.people.count());
+    world.report("people_fleeing", g.people.fleeing);
     world.report("goods_loose", g.goods.loose_total);
     world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));
