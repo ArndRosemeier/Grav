@@ -89,6 +89,8 @@ const RUN: f32 = 3.3;
 const FEAR: f32 = 9.0;
 
 struct Person {
+    /// Walking speed, m/s: what this crowd's walk clip carries at an easy step.
+    pace: f32,
     crowd: CrowdId,
     agent: CrowdAgentId,
     road: Road,
@@ -287,10 +289,19 @@ impl People {
                 .iter()
                 .map(|m| (m.positions.len(), m.indices.len()))
                 .collect();
-            eprintln!("{folk:?} {face}: {sizes:?}");
+            let stride = model.ground_speed("walk");
+            eprintln!("{folk:?} {face}: walk {stride:?} m/s, {sizes:?}");
         }
+        // The walk plays at the speed its feet carry it over the ground
+        // (measured from the planted foot), so the feet do not skate.
+        let stride = model
+            .ground_speed("walk")
+            .filter(|v| *v > 0.1)
+            .unwrap_or(WALK);
+        // Short strides walk a little slower, at a quicker step.
+        let pace = (stride * 1.3).clamp(0.6, WALK);
         let profile = CrowdProfile::new("idle", "walk")
-            .walk_speed(WALK)
+            .walk_speed(stride)
             .poses(["jog", "talk", "arms folded", "jump"])
             .far_detail(0.12)
             .near(16.0, 6)
@@ -321,6 +332,7 @@ impl People {
                     wait: 6.0 * hash(key, 3),
                     heading: if hash(key, 4) < 0.5 { -1.0 } else { 1.0 },
                     key,
+                    pace,
                     turn: 0,
                     pose: None,
                     at,
@@ -388,11 +400,11 @@ impl People {
                         continue;
                     }
                     front = way.normalize();
-                    let next = l.at + front * WALK * dt;
+                    let next = l.at + front * p.pace * dt;
                     l.at = world
                         .cast_ray(next + up * 1.2, -up, 4.0)
                         .map_or(next, |hit| hit.point);
-                    (pose, speed) = (None, WALK);
+                    (pose, speed) = (None, p.pace);
                 }
                 let rot = grav_core::upright(up, front);
                 world.set_crowd_agent(p.crowd, p.agent, space::place(l.at, rot), speed)?;
@@ -441,7 +453,7 @@ impl People {
                 }
             } else {
                 let left = p.goal - p.s;
-                if left.abs() < WALK * dt {
+                if left.abs() < p.pace * dt {
                     // There: stand a while, some talking, some arms folded.
                     p.turn += 1;
                     p.wait = 2.5 + 9.0 * hash(p.key, 10 + p.turn);
@@ -455,8 +467,8 @@ impl People {
                     };
                 } else {
                     p.heading = left.signum();
-                    p.s += p.heading * WALK * dt;
-                    speed = WALK;
+                    p.s += p.heading * p.pace * dt;
+                    speed = p.pace;
                 }
             }
             let Some(at) = p.road.at(rock, p.s, p.off) else {
