@@ -147,11 +147,13 @@ pub struct Flight {
     pub drag: f32,
     /// Below this speed the box stops and hangs.
     pub rest_speed: f32,
-    /// Throw speed with no wind-up and with a full one, m/s.
-    pub min_speed: f32,
-    pub max_speed: f32,
-    /// Seconds to wind up to the full speed.
-    pub windup_seconds: f32,
+    /// The throw's range: shortest, longest, and how much one click adds
+    /// or takes away, m.
+    pub min_range: f32,
+    pub max_range: f32,
+    pub range_step: f32,
+    /// Holding the button keeps changing the range at this many m/s.
+    pub range_rate: f32,
     /// Half the box's size, m.
     pub half_size: f32,
     /// How close the hero must come to pick up a dropped box, m.
@@ -163,9 +165,10 @@ impl Default for Flight {
         Self {
             drag: 1.5,
             rest_speed: 0.4,
-            min_speed: 3.0,
-            max_speed: 45.4,
-            windup_seconds: 1.2,
+            min_range: 2.0,
+            max_range: 30.0,
+            range_step: 1.0,
+            range_rate: 8.0,
             half_size: 0.18,
             pickup_reach: 1.8,
         }
@@ -178,11 +181,9 @@ impl Flight {
         ((speed - self.rest_speed) / self.drag.max(1e-3)).max(0.0)
     }
 
-    /// The throw speed after winding up for `seconds`.
-    pub fn speed_after(&self, seconds: f32) -> f32 {
-        let u = (seconds / self.windup_seconds.max(1e-3)).clamp(0.0, 1.0);
-        // Eased, so short throws are easy to judge.
-        self.min_speed + (self.max_speed - self.min_speed) * u * u
+    /// The throw speed that carries a box `range` metres.
+    pub fn speed_for(&self, range: f32) -> f32 {
+        range.max(0.0) * self.drag.max(1e-3) + self.rest_speed
     }
 
     /// Seconds a box thrown at `speed` flies before it hangs.
@@ -411,7 +412,7 @@ mod tests {
     fn a_thrown_box_flies_straight_and_stops_where_the_range_says() {
         let flight = Flight::default();
         let mut s = Stone::new(1, common());
-        let speed = flight.speed_after(0.8);
+        let speed = flight.speed_for(12.0);
         assert!(s.throw(Vec3::ZERO, Vec3::X * speed, Quat::IDENTITY));
         assert!(s.source(None).is_none(), "shut in flight");
         let mut t = 0.0;
@@ -427,8 +428,7 @@ mod tests {
             flight.range(speed)
         );
         assert!((t - flight.duration(speed)).abs() < 0.05);
-        // A full wind-up throws 30 m.
-        assert!((flight.range(flight.speed_after(5.0)) - 30.0).abs() < 0.1);
+        assert!((at.x - 12.0).abs() < 0.05);
     }
 
     #[test]

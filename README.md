@@ -31,14 +31,16 @@ costs to `measure.txt`. `GRAV_FRAME_TIMES=1` shows frame times while playing.
 With the packs the hero is an Actors dwarf that idles, walks and runs;
 without them a block figure stands in (`GRAV_PACKS` points elsewhere).
 
-WASD walk, Shift sprint, Q/E turn (or the mouse with the right button held to
+WASD walk, Shift sprint, Q/E turn (or drag with the right mouse button to
 look around), Space jump (push off while drifting), R hold for stone sense.
 
 Stones travel in coated boxes. 1-9 takes a box in hand (the same key puts it
-away). Hold the left mouse button to wind up and release to throw: the box
-flies straight, shut and weightless, and air stops it; while you wind up, a
-glass box shows where it will hang, with fans over the sides it will open,
-your fall arrow and the pieces that would break. Tab opens the box bench:
+away). With a box in hand, a glass box shows where it would hang, with fans
+over the sides it will open, your fall arrow and the pieces that would break.
+Left click throws further, right click shorter (hold to keep changing it; a
+right drag still turns the view), and the two buttons under the crosshair
+throw it or put it away. The box flies straight, shut and weightless, and air
+stops it. Tab opens the box bench:
 click a face on the unfolded box to make it open some seconds after the box
 comes to rest, and set when the box bares its mass and comes down. Walk to a
 box that has come down to pick it up. The belt at the bottom shows every box,

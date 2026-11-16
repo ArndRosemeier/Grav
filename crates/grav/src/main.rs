@@ -2,8 +2,9 @@
 //!
 //! Keys: WASD walk, Shift sprint, Q/E turn (or look around with the mouse,
 //! right button held), Space jump (push off while drifting), 1-9 take a box
-//! in hand (again: put it away), hold the left mouse button to wind up and
-//! release to throw, Tab the box bench, R hold for stone sense.
+//! in hand (again: put it away), left / right click more / less range, the
+//! buttons under the crosshair throw or cancel, Tab the box bench, R hold
+//! for stone sense.
 
 mod boxes;
 mod cavern;
@@ -34,6 +35,13 @@ use response::Response;
 use std::collections::HashMap;
 use visuals::Visuals;
 
+/// Holding the left button this long keeps adding range.
+const RANGE_REPEAT_AFTER: f32 = 0.35;
+/// A right press shorter than this and moving the mouse less than this
+/// many pixels is a click (otherwise it turned the view).
+const RIGHT_CLICK_SECONDS: f32 = 0.35;
+const RIGHT_CLICK_PIXELS: f32 = 6.0;
+
 struct Game {
     tuning: Tuning,
     base: grav_core::Field,
@@ -43,6 +51,12 @@ struct Game {
     town: town::Town,
     hero: Hero,
     boxes: Boxes,
+    /// Seconds the left button has been held while changing the range.
+    range_held: f32,
+    /// A right press in progress: seconds held and pixels the mouse moved.
+    right_press: Option<(f32, f32)>,
+    /// A throw button pressed in last frame's HUD.
+    pressed_button: Option<boxes::ThrowButton>,
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
@@ -110,6 +124,9 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         town,
         hero,
         boxes,
+        range_held: 0.0,
+        right_press: None,
+        pressed_button: None,
         response,
         visuals,
         waters,
@@ -184,8 +201,9 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.hero.cam_up
     };
     let hand_now = g.hero.hand(world);
-    // Aim at what is under the mouse (or far along its ray); while the left
-    // button is held the throw winds up, and on release the box flies.
+    // Aim at what is under the mouse (or far along its ray). With a box in
+    // hand, left click adds range and right click takes it away (holding
+    // keeps changing it); the buttons under the crosshair throw or cancel.
     let (eye, mut ray) = world.cursor_ray(frame);
     if g.demo.is_some() {
         // No mouse in a verify run: aim ahead of the hero, a little up.
@@ -195,19 +213,37 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         .cast_ray_ignoring(eye, ray, 120.0, hero_id)
         .map_or(eye + ray * 120.0, |h| h.point);
     let aim_dir = (aim_point - hand_now).normalize_or(g.hero.heading);
-    let over_ui = frame.ui.ctx().wants_pointer_input() || g.boxes.bench;
+    let over_ui = frame.ui.ctx().is_pointer_over_area() || g.boxes.bench;
     let ready_to_throw = g.boxes.out && !g.boxes.bench;
-    if ready_to_throw {
-        if input.mouse_clicked(MouseButton::Left) && !over_ui {
-            g.boxes.windup = Some(0.0);
+    let (step, rate) = (g.tuning.flight.range_step, g.tuning.flight.range_rate);
+    if ready_to_throw && !over_ui {
+        if input.mouse_clicked(MouseButton::Left) {
+            g.boxes.change_range(step);
+            g.range_held = 0.0;
         }
-        if let Some(w) = g.boxes.windup.as_mut() {
-            *w += dt;
+        if input.mouse_down(MouseButton::Left) {
+            g.range_held += dt;
+            if g.range_held > RANGE_REPEAT_AFTER {
+                g.boxes.change_range(rate * dt);
+            }
         }
-    } else {
-        g.boxes.windup = None;
     }
-    let speed = g.boxes.flight().speed_after(g.boxes.windup.unwrap_or(0.0));
+    // The right button also turns the view: a short press that hardly
+    // moves the mouse counts as a click.
+    if input.mouse_clicked(MouseButton::Right) {
+        g.right_press = Some((0.0, 0.0));
+    }
+    if let Some((held, moved)) = g.right_press.as_mut() {
+        *held += dt;
+        *moved += input.mouse_delta().length();
+        if !input.mouse_down(MouseButton::Right) {
+            if *held < RIGHT_CLICK_SECONDS && *moved < RIGHT_CLICK_PIXELS && ready_to_throw {
+                g.boxes.change_range(-step);
+            }
+            g.right_press = None;
+        }
+    }
+    let speed = g.tuning.flight.speed_for(g.boxes.range);
     let aim = ready_to_throw.then(|| {
         g.boxes.aim(
             world,
@@ -218,10 +254,14 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             (up_now, g.hero.heading),
         )
     });
-    if let (Some(a), Some(_)) = (&aim, g.boxes.windup) {
-        if !input.mouse_down(MouseButton::Left) {
-            g.boxes.throw(a);
+    match g.pressed_button.take() {
+        Some(boxes::ThrowButton::Throw) => {
+            if let Some(a) = &aim {
+                g.boxes.throw(a);
+            }
         }
+        Some(boxes::ThrowButton::Cancel) => g.boxes.out = false,
+        None => {}
     }
     if let Some(demo) = g.demo.as_mut() {
         demo.stumbled |= g.hero.stumble > 0.0;
@@ -267,8 +307,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.visuals.dust(world, &field, head, dt)?;
     g.visuals
         .sense(world, input.down(Key::R).then_some(&field), head)?;
-    // The throw preview: the target under the mouse, where the box would
-    // stop, the sides it will open, your fall and what would break.
+    // The throw preview: where the box would stop, the sides it will
+    // open, your fall and what would break.
     match &aim {
         Some(a) => {
             let with = g.boxes.preview_field(&field, a);
@@ -279,25 +319,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
                 mass: 70.0,
                 lodestone: None,
             });
-            let zone = world
-                .cast_ray_ignoring(eye, ray, 120.0, hero_id)
-                .filter(|h| {
-                    h.point.distance(hand_now)
-                        <= g.boxes.flight().range(g.boxes.flight().max_speed) + 2.0
-                });
-            match zone {
-                Some(h) => g.visuals.preview(
-                    world,
-                    Some((
-                        h.point,
-                        h.normal,
-                        center,
-                        fall,
-                        g.boxes.current().spec.charge == Charge::Repelling,
-                    )),
-                )?,
-                None => g.visuals.preview(world, None)?,
-            }
+            g.visuals.preview(world, Some((center, fall)))?;
             g.response.preview(world, Some(&with))?;
         }
         None => {
@@ -310,10 +332,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             .normalize_or(up.any_orthonormal_vector());
         Quat::from_mat3(&engine::glam::Mat3::from_cols(up.cross(front), up, front))
     };
-    // The ghost shows while the throw winds up; before that, only the
-    // target under the mouse.
-    let ghost = aim.filter(|_| g.boxes.windup.is_some());
-    g.boxes.draw(world, hand, hand_frame, ghost.as_ref(), dt)?;
+    g.boxes.draw(world, hand, hand_frame, aim.as_ref(), dt)?;
     if g.demo.is_some() && (3.4..3.9).contains(&frame.time) {
         // A close look at the hanging box with its front lid open.
         if let Some(at) = g.boxes.position(0) {
@@ -380,26 +399,16 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     if let Some((m, _)) = &g.boxes.message {
         ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
     }
-    if let Some(w) = g.boxes.windup {
-        let f = g.boxes.flight();
-        let speed = f.speed_after(w);
-        ui.bar(
-            Anchor::Bottom,
-            &format!("Throw {:.0} m", f.range(speed)),
-            speed - f.min_speed,
-            f.max_speed - f.min_speed,
-            boxes::charge_color(g.boxes.current().spec.charge),
-        );
-    }
     let feet = g.hero.feet(world);
     let ctx = frame.ui.ctx();
     g.boxes.belt(ctx, feet);
     g.boxes
         .countdowns(ctx, world, frame.width as f32, frame.height as f32);
     g.boxes.bench_window(ctx);
+    g.pressed_button = g.boxes.throw_buttons(ctx);
     ui.text_styled(
         Anchor::BottomLeft,
-        "WASD walk  Shift sprint  Q/E turn  RMB look  1-9 box  hold LMB throw  Tab bench  R sense",
+        "WASD walk  Shift sprint  Q/E turn  RMB drag look  1-9 box  LMB/RMB range  Tab bench  R sense",
         13.0,
         rgb(200, 200, 200),
     );
@@ -425,7 +434,7 @@ fn run_demo(
             let from = feet + up * 1.0;
             let heading = (Vec3::Z - up * up.z).normalize_or(up.any_orthonormal_vector());
             let dir = (heading + up * 0.25).normalize();
-            let speed = boxes.flight().speed_after(0.5);
+            let speed = boxes.flight().speed_for(7.0);
             boxes.stones[0].program = Program::only(&[Face::Front], 0.3, 1.5);
             let aim = boxes.aim(world, hero, from, dir, speed, (up, heading));
             demo.throw_rest = aim.rest;

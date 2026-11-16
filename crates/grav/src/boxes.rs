@@ -182,8 +182,9 @@ pub struct Boxes {
     pub selected: usize,
     /// The selected box is in the hero's hand, ready to throw.
     pub out: bool,
-    /// Seconds the throw has been wound up (None: not winding).
-    pub windup: Option<f32>,
+    /// How far the next throw carries, m (left click adds, right click
+    /// takes away; it stays set between throws).
+    pub range: f32,
     /// The box bench is open.
     pub bench: bool,
     bench_face: usize,
@@ -266,7 +267,7 @@ impl Boxes {
             looks,
             selected: 0,
             out: false,
-            windup: None,
+            range: 10.0,
             bench: false,
             bench_face: 0,
             ghost: Ghost { root, fans, path },
@@ -301,7 +302,6 @@ impl Boxes {
                 });
             }
         }
-        self.windup = None;
     }
 
     /// The throw for the box in hand along `dir` at `speed`: where it
@@ -344,7 +344,11 @@ impl Boxes {
         }
         self.stones[i].throw(aim.from, aim.dir * aim.speed, aim.frame);
         self.out = false;
-        self.windup = None;
+    }
+
+    /// Change the throw's range by `by` metres, within the flight's limits.
+    pub fn change_range(&mut self, by: f32) {
+        self.range = (self.range + by).clamp(self.flight.min_range, self.flight.max_range);
     }
 
     pub fn flight(&self) -> &Flight {
@@ -711,7 +715,7 @@ impl Boxes {
         let ready = self.stones[i].is_ready();
         let mut open = self.bench;
         let mut face = self.bench_face;
-        let flight_range = self.flight.range(self.flight.max_speed);
+        let flight_range = self.flight.max_range;
         let s = &mut self.stones[i];
         let col = charge_ui(s.spec.charge);
         egui::Window::new(format!("Box bench: {}", s.spec.name))
@@ -813,7 +817,7 @@ impl Boxes {
                 ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(format!(
-                        "Hold the left mouse button to wind up, release to throw (up to {flight_range:.0} m). Tab closes the bench."
+                        "With a box in hand, left click adds range, right click takes it away (up to {flight_range:.0} m); the buttons under the crosshair throw or put the box away. Tab closes the bench."
                     ))
                     .size(12.0)
                     .color(Color32::from_gray(170)),
@@ -821,5 +825,108 @@ impl Boxes {
             });
         self.bench = open;
         self.bench_face = face;
+    }
+}
+
+/// What the throw buttons were asked to do this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThrowButton {
+    Throw,
+    Cancel,
+}
+
+/// A round icon button: a dark disc with a ring, brighter on hover.
+fn icon_button(
+    ui: &mut egui::Ui,
+    ring: Color32,
+    paint: impl FnOnce(&egui::Painter, Pos2, f32, Color32),
+) -> egui::Response {
+    let size = 46.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(size, size), Sense::click());
+    let c = rect.center();
+    let r = size * 0.5 - 2.0;
+    let hot = resp.hovered();
+    let painter = ui.painter();
+    painter.circle_filled(
+        c,
+        r,
+        Color32::from_rgba_unmultiplied(18, 16, 14, if hot { 235 } else { 200 }),
+    );
+    let ring = if hot { ring } else { ring.gamma_multiply(0.7) };
+    painter.circle_stroke(c, r, Stroke::new(2.0_f32, ring));
+    let ink = if hot {
+        Color32::WHITE
+    } else {
+        Color32::from_gray(225)
+    };
+    paint(painter, c, r, ink);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+impl Boxes {
+    /// The two buttons under the crosshair while a box is in hand: throw
+    /// (an arc ending in an arrowhead) and put it away (a cross), with the
+    /// range between them.
+    pub fn throw_buttons(&self, ctx: &egui::Context) -> Option<ThrowButton> {
+        if !self.out || self.bench {
+            return None;
+        }
+        let col = charge_ui(self.current().spec.charge);
+        let mut pressed = None;
+        egui::Area::new(egui::Id::new("throw buttons"))
+            .anchor(Align2::CENTER_CENTER, [0.0, 92.0])
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let cancel = icon_button(ui, Color32::from_gray(150), |p, c, r, ink| {
+                        let d = r * 0.38;
+                        let s = Stroke::new(3.0_f32, ink);
+                        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], s);
+                        p.line_segment([c + egui::vec2(-d, d), c + egui::vec2(d, -d)], s);
+                    });
+                    if cancel.clicked() {
+                        pressed = Some(ThrowButton::Cancel);
+                    }
+                    // The range, between the buttons.
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 46.0), Sense::hover());
+                    ui.painter().text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        format!("{:.0} m", self.range),
+                        FontId::proportional(20.0),
+                        Color32::from_gray(240),
+                    );
+                    let throw = icon_button(ui, col, |p, c, r, ink| {
+                        // An arc rising to the right, ending in an arrowhead.
+                        let s = Stroke::new(3.0_f32, ink);
+                        let rr = r * 0.5;
+                        let centre = c + egui::vec2(0.0, rr * 0.55);
+                        let pts: Vec<Pos2> = (0..=16)
+                            .map(|k| {
+                                let a = std::f32::consts::PI * (1.0 - k as f32 / 16.0 * 0.8);
+                                centre + egui::vec2(a.cos(), -a.sin()) * rr
+                            })
+                            .collect();
+                        let tip = *pts.last().expect("points");
+                        let before = pts[pts.len() - 3];
+                        p.add(egui::Shape::line(pts, s));
+                        let dir = (tip - before).normalized();
+                        let side = egui::vec2(-dir.y, dir.x);
+                        let head = r * 0.3;
+                        p.add(egui::Shape::convex_polygon(
+                            vec![
+                                tip + dir * head * 0.6,
+                                tip - dir * head * 0.6 + side * head * 0.6,
+                                tip - dir * head * 0.6 - side * head * 0.6,
+                            ],
+                            ink,
+                            Stroke::NONE,
+                        ));
+                    });
+                    if throw.clicked() {
+                        pressed = Some(ThrowButton::Throw);
+                    }
+                });
+            });
+        pressed
     }
 }
