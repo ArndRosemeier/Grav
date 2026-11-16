@@ -13,6 +13,50 @@ const AWAKE_DISTANCE: f32 = 120.0;
 const SETTLE_SECONDS: f32 = 6.0;
 const SETTLE_MARGIN: f32 = 3.0;
 
+/// The simulated water's surface: the fluid's mesh is lumpy where its
+/// particles lie, and Engine's reflections take the world's +y as up, so
+/// a lake that hangs upside down mirrors sky in blotches. This calms the
+/// surface towards the basin's own up (params[0].xyz) and stirs it with
+/// a fine ripple instead. The mesh also has a sheet where the water lies
+/// on the rock; facing into the rock, it would catch light that is not
+/// there and show through the water in pale patches, so it is clear.
+const SURFACE: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let up = normalize(m.params[0].xyz);
+    let n = normalize(m.normal);
+    if dot(n, up) < -0.15 {
+        o.color = vec4<f32>(base.color.rgb, 0.0);
+        o.roughness = 1.0;
+        return o;
+    }
+    let face = up;
+    let p = m.world_pos;
+    let t = m.time;
+    let ripple = vec3<f32>(
+        sin(p.x * 3.1 + t * 1.3) + sin(p.z * 4.7 - t * 0.9),
+        0.0,
+        sin(p.z * 2.9 + t * 1.1) + sin(p.x * 5.3 + t * 0.7),
+    ) * 0.035;
+    o.normal = normalize(mix(n, face, 0.85) + (ripple - face * dot(ripple, face)));
+    o.roughness = 0.1;
+    return o;
+}
+"#;
+
+/// Give a basin's water its surface (`SURFACE`), calmed towards `up`.
+fn calm_surface(world: &mut World, fluid: FluidId, name: &str, up: Vec3) -> EngineResult<()> {
+    let material = world.add_material(
+        CustomMaterial::new(name, SURFACE)
+            .param(0, [up.x, up.y, up.z, 0.0])
+            .see_through(),
+    )?;
+    if let Some(e) = world.fluid_entity(fluid) {
+        world.set_custom_material(e, material)?;
+    }
+    Ok(())
+}
+
 /// A body of simulated water in a basin of the rock.
 pub struct Basin {
     pub fluid: FluidId,
@@ -142,14 +186,18 @@ impl Waters {
         field: &grav_core::Field,
         dt: f32,
     ) -> EngineResult<()> {
-        if self.lake_job.as_ref().is_some_and(|j| j.is_finished()) {
+        if std::env::var("GRAV_NO_LAKE").is_err()
+            && self.lake_job.as_ref().is_some_and(|j| j.is_finished())
+        {
             if let Some(job) = self.lake_job.take() {
                 let fluid = job.join().map_err(|_| {
                     EngineError::InvalidValue("the hanging lake's worker panicked".into())
                 })??;
                 let (at, rot) = space::island_frame(Vec3::NEG_Y);
+                let fluid = world.add_fluid(fluid)?;
+                calm_surface(world, fluid, "hanging lake water", rot * Vec3::Y)?;
                 self.lake = Some(Basin {
-                    fluid: world.add_fluid(fluid)?,
+                    fluid,
                     at,
                     rot,
                     reach: lake_across(),
