@@ -8,6 +8,7 @@
 
 mod cavern;
 mod dwarf;
+mod flora;
 mod heart;
 mod hero;
 mod link;

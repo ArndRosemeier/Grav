@@ -31,6 +31,9 @@ pub struct Tour {
     views: Vec<View>,
     frame: u32,
     first: usize,
+    /// The views of what grows have been added (they are known only
+    /// once it has grown).
+    grown: bool,
     /// The game's own lens (field of view, near plane), kept for the views
     /// that do not zoom.
     lens: Option<(f32, f32)>,
@@ -41,6 +44,7 @@ impl Tour {
         let first = std::env::var("GRAV_TOUR").ok()?.parse::<usize>().ok()?;
         Some(Self {
             views: views(),
+            grown: false,
             frame: 0,
             first: first.saturating_sub(1),
             lens: None,
@@ -49,6 +53,10 @@ impl Tour {
 
     /// Set this frame's camera.
     pub fn frame(&mut self, world: &mut World) {
+        if !self.grown {
+            self.grown = true;
+            self.views.extend(growth_views());
+        }
         let index = (self.first + (self.frame / HOLD) as usize) % self.views.len();
         let v = &self.views[index];
         let camera = world.camera();
@@ -256,6 +264,29 @@ fn views() -> Vec<View> {
             zoom: false,
         },
     ]
+}
+
+/// Views of what grows: each landmark close up, then from above.
+fn growth_views() -> Vec<View> {
+    let mut views = Vec::new();
+    for &(name, at, up, ahead) in crate::flora::landmarks() {
+        let side = up.cross(ahead).normalize_or(up.any_orthonormal_vector());
+        views.push(View {
+            name,
+            eye: at + up * 1.7 - ahead * 4.2 + side * 2.4,
+            target: at + up * 1.0,
+            up,
+            zoom: false,
+        });
+        views.push(View {
+            name,
+            eye: at + up * 34.0 - ahead * 12.0,
+            target: at,
+            up,
+            zoom: false,
+        });
+    }
+    views
 }
 
 fn rock_tip() -> f32 {

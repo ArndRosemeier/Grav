@@ -15,6 +15,7 @@
 //!
 //! Meshes are built on worker threads and handed over ready to spawn.
 
+use crate::flora::Growth;
 use crate::space::{self, ISLAND_CENTER, ISLAND_RADIUS, SPIRE_END, SPIRE_RADIUS, WALL_Z};
 use crate::wet::{Ground, Water};
 use engine::prelude::*;
@@ -454,6 +455,22 @@ impl Rock {
         top.min(side).min(ring)
     }
 
+    /// Metres from `p` (on the spire, the flare or the wall) to the
+    /// nearest road.
+    pub fn path_distance(p: Vec3) -> f32 {
+        let rho = p.truncate().length();
+        let theta = p.x.atan2(p.y);
+        if p.z > FLARE_TOP {
+            return theta.abs() * rho;
+        }
+        let lane = if p.x.abs() < 235.0 {
+            p.y.abs()
+        } else {
+            f32::MAX
+        };
+        Self::road_distance(theta, rho).min(lane)
+    }
+
     /// How much of the town's gentle ground applies at `z` along the spire
     /// (1 in the town, 0 in the wild rock).
     fn spire_town(z: f32) -> f32 {
@@ -630,10 +647,10 @@ fn grid_mesh(
     cols: std::ops::Range<i32>,
     point: &(dyn Fn(i32, i32) -> Vec3 + Sync),
     uv: &(dyn Fn(i32, i32) -> [f32; 2] + Sync),
+    cover: &(dyn Fn(i32, i32) -> Vec3 + Sync),
     flip: bool,
 ) -> EngineResult<Mesh> {
     let mut mesh = Mesh::new();
-    let white = rgb(255, 255, 255);
     let (nr, nc) = (rows.len() as i32, cols.len() as i32);
     let mut ids = Vec::with_capacity((nr * nc) as usize);
     for r in rows.clone() {
@@ -652,7 +669,10 @@ fn grid_mesh(
             };
             let id = mesh.add_point(p)?;
             mesh.set_point_normal(id, n)?;
-            mesh.set_point_color(id, white)?;
+            // The colour carries what grows there (flora.rs): black is
+            // bare rock.
+            let grown = cover(r, c).clamp(Vec3::ZERO, Vec3::ONE);
+            mesh.set_point_color(id, Color::rgb01_unchecked(grown.x, grown.y, grown.z))?;
             mesh.set_point_uv(id, uv(r, c))?;
             ids.push(id);
         }
@@ -801,7 +821,7 @@ pub struct Waters {
 
 type Job = Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>;
 
-fn spire_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
+fn spire_chunks(rock: &Rock, waters: &Arc<Waters>, growth: &Arc<Growth>) -> Vec<Job> {
     let (first, rows) = rock.spire_rows();
     let per_chunk = 46;
     let mut jobs: Vec<Job> = Vec::new();
@@ -810,8 +830,15 @@ fn spire_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
         let end = (start + per_chunk).min(rows);
         let rock = rock.clone();
         let waters = waters.clone();
+        let growth = growth.clone();
         jobs.push(Box::new(move || {
             let point = |r: i32, c: i32| rock.spire_grid_point(r, c);
+            let cover = |r: i32, c: i32| {
+                let r = r.clamp(first, rows);
+                growth.spire_cover[waters
+                    .spire
+                    .index((r - first) as usize, c.rem_euclid(SPIRE_AROUND) as usize)]
+            };
             let uv = |r: i32, c: i32| {
                 let r = r.clamp(first, rows);
                 let i = waters
@@ -821,7 +848,14 @@ fn spire_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
             };
             // Rows run along +z, columns around towards +x from +y, so
             // du x dv points out of the rock.
-            let mesh = grid_mesh(start..end + 1, 0..SPIRE_AROUND + 1, &point, &uv, false)?;
+            let mesh = grid_mesh(
+                start..end + 1,
+                0..SPIRE_AROUND + 1,
+                &point,
+                &uv,
+                &cover,
+                false,
+            )?;
             Ok(RockPiece {
                 kind: RockKind::Spire,
                 mesh: mesh.prepare(),
@@ -919,7 +953,7 @@ fn wall_coord(i: i32, half_steps: i32) -> f32 {
 /// The wall's grid runs this many steps each way from the spire's axis.
 const WALL_HALF_STEPS: i32 = 216;
 
-fn wall_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
+fn wall_chunks(rock: &Rock, waters: &Arc<Waters>, growth: &Arc<Growth>) -> Vec<Job> {
     let half_steps = WALL_HALF_STEPS;
     let per_chunk = 54;
     let mut jobs: Vec<Box<dyn FnOnce() -> EngineResult<RockPiece> + Send>> = Vec::new();
@@ -931,8 +965,15 @@ fn wall_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
             let c1 = (c0 + per_chunk).min(half_steps);
             let rock = rock.clone();
             let waters = waters.clone();
+            let growth = growth.clone();
             jobs.push(Box::new(move || {
                 let point = |r: i32, c: i32| rock.wall_grid_point(r, c);
+                let cover = |r: i32, c: i32| {
+                    growth.wall_cover[waters.wall.index(
+                        (r.clamp(-half_steps, half_steps) + half_steps) as usize,
+                        (c.clamp(-half_steps, half_steps) + half_steps) as usize,
+                    )]
+                };
                 let uv = |r: i32, c: i32| {
                     let i = waters.wall.index(
                         (r.clamp(-half_steps, half_steps) + half_steps) as usize,
@@ -940,7 +981,7 @@ fn wall_chunks(rock: &Rock, waters: &Arc<Waters>) -> Vec<Job> {
                     );
                     [waters.wall_water.wet[i], waters.wall_water.depth[i]]
                 };
-                let mesh = grid_mesh(r0..r1 + 1, c0..c1 + 1, &point, &uv, true)?;
+                let mesh = grid_mesh(r0..r1 + 1, c0..c1 + 1, &point, &uv, &cover, true)?;
                 Ok(RockPiece {
                     kind: RockKind::Wall,
                     mesh: mesh.prepare(),
@@ -966,7 +1007,14 @@ fn island_job(rock: &Rock) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send
             let dir = Vec3::new(lat.sin() * lon.sin(), lat.cos(), lat.sin() * lon.cos());
             rock.island_point(dir)
         };
-        let mesh = grid_mesh(0..rows + 1, 0..cols + 1, &point, &|_, _| [0.0, 0.0], false)?;
+        let mesh = grid_mesh(
+            0..rows + 1,
+            0..cols + 1,
+            &point,
+            &|_, _| [0.0, 0.0],
+            &|_, _| Vec3::ZERO,
+            false,
+        )?;
         Ok(RockPiece {
             kind: RockKind::Island,
             mesh: mesh.prepare(),
@@ -975,15 +1023,23 @@ fn island_job(rock: &Rock) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send
     })
 }
 
-/// Build all the rock on worker threads. Takes a few seconds; the caller
-/// spawns the pieces.
-pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Vec<RockPiece>> {
+/// Build all the rock on worker threads, and grow what grows on it
+/// (the rock's mesh carries the mats' colours). Takes a few seconds; the
+/// caller spawns the pieces and the plants.
+pub fn build_all(
+    rock: &Rock,
+    heart_dir: Vec3,
+) -> EngineResult<(Vec<RockPiece>, Vec<crate::flora::Stand>)> {
     let waters = Arc::new(rock.waters(heart_dir));
-    let mut jobs = spire_chunks(rock, &waters);
-    jobs.extend(wall_chunks(rock, &waters));
+    let growth = Arc::new(crate::flora::grow(&waters, heart_dir, &|p| {
+        Rock::path_distance(p)
+    }));
+    let mut jobs = spire_chunks(rock, &waters, &growth);
+    jobs.extend(wall_chunks(rock, &waters, &growth));
     jobs.extend(water_jobs(&waters));
     jobs.push(island_job(rock));
-    on_workers(jobs)
+    let stands = on_workers(crate::flora::stands(&growth.plants))?;
+    Ok((on_workers(jobs)?, stands))
 }
 
 /// Run jobs on worker threads and give their results in the jobs' order.

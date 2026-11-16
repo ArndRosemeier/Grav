@@ -94,7 +94,18 @@ pub fn place(at: Vec3, rot: Quat) -> Place {
 /// its solid shape from the same mesh that is drawn.
 pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
     let heart_dir = HEART_CENTER.normalize();
-    for piece in rock::build_all(rock::shared(), heart_dir)? {
+    let (pieces, stands) = rock::build_all(rock::shared(), heart_dir)?;
+    // What grows on it: each shape of each kind once, drawn wherever one
+    // stands, lighter with distance.
+    for stand in stands {
+        let set = world.spawn_lod_prepared(stand.levels)?;
+        world.set_lod_places(set, &stand.places)?;
+        for (i, level) in world.lod_levels(set)?.into_iter().enumerate() {
+            world.set_custom_material(level, look.flora)?;
+            world.set_casts_shadow(level, stand.shadow && i < 2)?;
+        }
+    }
+    for piece in pieces {
         let id = world.spawn_prepared(piece.mesh);
         world.set_custom_material(id, look.rock_material(piece.kind))?;
         if piece.solid {

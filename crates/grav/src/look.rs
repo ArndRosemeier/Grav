@@ -245,6 +245,26 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     rough = mix(rough, 0.1 + 0.18 * gv_noise(p * 5.0), soaked);
     n = normalize(mix(n, n0, soaked * 0.5));
 
+    // What grows on it (the mesh colour, from flora.rs: a mat's colour
+    // times how thick it lies; black is bare rock). A mat is not paint: it
+    // lies in the hollows of the grain first and thins to specks at its
+    // edge, and it is matt.
+    let grown = base.color.rgb;
+    let thick = max(grown.r, max(grown.g, grown.b));
+    if thick > 0.02 {
+        let hue = grown / thick;
+        let nap = gv_fbm3(p * 1.3 + 11.0) * 0.55 + gv_noise(p * 6.0) * 0.3 + gv_noise(p * 21.0) * 0.15;
+        let mat = smoothstep(1.02 - thick * 0.72, 1.2 - thick * 0.72, nap + 0.25 * mottle) * (1.0 - soaked);
+        let pile = 0.35 + 0.9 * gv_noise(p * 17.0) * gv_noise(p * 4.3 + 7.0);
+        let felt = mix(hue, vec3<f32>(dot(hue, vec3<f32>(0.3, 0.5, 0.2))), 0.3);
+        color = mix(color, felt * 0.2 * pile, mat);
+        rough = mix(rough, 0.93, mat);
+        metal = mix(metal, 0.0, mat);
+        n = normalize(mix(n, n0, mat * 0.6));
+        // It gives a little light of its own, in specks.
+        emission = emission * (1.0 - mat) + hue * mat * 0.3 * smoothstep(0.72, 0.9, gv_noise(p * 9.0 + m.time * 0.05));
+    }
+
     // Rough stone has no mirror sheen at a glancing view: its grain hides
     // it. Lean the shading normal towards the eye there, so the sky's
     // reflection does not wash the strata out along a street.
@@ -267,6 +287,53 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 ///
 /// params[0].xyz: the heart's centre. params[0].w: light strength.
 /// uv.y: 0 wall, 1 spire (uv.x runs root to tip), 2 island.
+/// Plants: their own colour (mesh colour times the plant's tint), a waxy
+/// skin, and light of their own where uv.x says so, slowly breathing,
+/// each plant in its own time.
+const FLORA: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    var c = base.color.rgb;
+    let p = m.object_pos;
+    let glow = m.uv.x;
+    let kind = m.uv.y;
+    let own = gv_noise(m.world_pos * 0.37);
+    let breath = 0.72 + 0.28 * sin(m.time * (0.5 + own) + own * 40.0);
+    var n = normalize(m.normal);
+    var rough = 0.34;
+    var lit = glow;
+    // A waxy stem: mottled, never one flat colour.
+    let mottle = gv_noise(p * 23.0) * 0.6 + gv_noise(p * 71.0) * 0.4;
+    c = c * (0.7 + 0.6 * mottle);
+    if kind > 1.5 {
+        // A skin of cells: each its own shade, dark seams between them,
+        // and the light it gives comes through the cells, not the seams.
+        let cells = gv_cells(p * 26.0 + gv_noise(p * 5.0) * 0.6);
+        let seam = 1.0 - smoothstep(0.0, 0.09, cells.y);
+        c = c * (0.62 + 0.55 * cells.x) * (1.0 - 0.55 * seam);
+        lit = glow * (0.45 + 0.9 * cells.x) * (1.0 - 0.8 * seam);
+        rough = mix(0.22, 0.6, seam);
+        n = normalize(n + (vec3<f32>(gv_noise(p * 60.0), gv_noise(p * 60.0 + 9.0), gv_noise(p * 60.0 + 17.0)) - 0.5) * 0.25 * (1.0 - seam));
+    } else if kind > 0.5 {
+        // Bark: plates with deep cracks between them, rough and matt.
+        let plates = gv_cells(p * vec3<f32>(7.0, 2.6, 7.0) + gv_noise(p * 2.0) * 0.8);
+        let crack = 1.0 - smoothstep(0.0, 0.12, plates.y);
+        c = c * (0.55 + 0.7 * plates.x) * (1.0 - 0.7 * crack);
+        rough = mix(0.7, 0.95, crack);
+        n = normalize(n + (vec3<f32>(gv_noise(p * 31.0), gv_noise(p * 31.0 + 9.0), gv_noise(p * 31.0 + 17.0)) - 0.5) * 0.7);
+        // Something glows faintly deep in the cracks.
+        lit = glow + crack * 0.12 * plates.x;
+    }
+    let rim = pow(1.0 - abs(dot(n, normalize(m.view_dir))), 3.0);
+    o.color = vec4<f32>(c * (1.0 - 0.5 * clamp(lit, 0.0, 1.0)), 1.0);
+    o.normal = n;
+    o.roughness = rough;
+    o.metallic = 0.0;
+    o.emission = c * (lit * 1.7 * breath + rim * 0.18);
+    return o;
+}
+"#;
+
 const CAVERN: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
@@ -365,6 +432,8 @@ pub struct Look {
     far: CustomMaterialId,
     cavern: CustomMaterialId,
     water: CustomMaterialId,
+    /// What plants are made of.
+    pub flora: CustomMaterialId,
     heart_dir: Vec3,
 }
 
@@ -404,7 +473,9 @@ impl Look {
         let water = world.add_material(
             CustomMaterial::new("water on rock", format!("{NOISE}{WATER}")).see_through(),
         )?;
+        let flora = world.add_material(CustomMaterial::new("flora", format!("{NOISE}{FLORA}")))?;
         Ok(Self {
+            flora,
             spire,
             wall,
             island,
