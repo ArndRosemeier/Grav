@@ -245,7 +245,7 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
         scenery.cavern.push((set, piece.places));
     }
     // The settlements' lamps give real light, each people's its own.
-    for &(at, glow) in crate::settle::lights() {
+    for &(at, up, glow) in crate::settle::lights() {
         use crate::settle::Glow;
         let lamp = match glow {
             Glow::Umbral => Lamp::point(at, rgb(150, 255, 205), 7.0, 13.0).shadows(true),
@@ -256,6 +256,24 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
             Glow::Goblin => Lamp::point(at, rgb(255, 90, 120), 4.5, 9.0).flicker(0.15),
         };
         world.add_lamp(lamp)?;
+        if glow == Glow::Dwarven {
+            // The fire in the bowl: flames and embers rise against the pull.
+            let coals = at - up * 0.12;
+            let side = Vec3::new(0.2, 0.2, 0.2);
+            world.particles_mut().start(
+                ParticleEmitter::flames(coals, 0.55)
+                    .with_spread(Vec3::splat(0.14))
+                    .with_velocity(up * 0.7)
+                    .with_velocity_jitter(side)
+                    .with_acceleration(up * 1.2),
+            )?;
+            world.particles_mut().start(
+                ParticleEmitter::embers(coals, 0.55)
+                    .with_velocity(up * 1.6)
+                    .with_velocity_jitter(Vec3::splat(0.5))
+                    .with_acceleration(up * 0.4),
+            )?;
+        }
     }
     if count {
         eprintln!("cavern triangles from the start, coarsest level first: {drawn:?}");

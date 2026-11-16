@@ -359,16 +359,17 @@ pub enum Glow {
     Goblin,
 }
 
-static LIGHTS: std::sync::OnceLock<Vec<(Vec3, Glow)>> = std::sync::OnceLock::new();
+static LIGHTS: std::sync::OnceLock<Vec<(Vec3, Vec3, Glow)>> = std::sync::OnceLock::new();
 
 /// Where the settlements' lights are (known once `plan` has run): the
-/// same spots their lit beads, coals and panes are drawn at.
-pub fn lights() -> &'static [(Vec3, Glow)] {
+/// same spots their lit beads, coals and panes are drawn at, each with
+/// its own up.
+pub fn lights() -> &'static [(Vec3, Vec3, Glow)] {
     LIGHTS.get().map_or(&[], |l| l.as_slice())
 }
 
 /// The light a thing built gives, if it gives one.
-fn light_of(s: &Site) -> Option<(Vec3, Glow)> {
+fn light_of(s: &Site) -> Option<(Vec3, Vec3, Glow)> {
     let (local, glow) = match s.make {
         Make::Lamp => (Vec3::new(0.0, 2.95, 0.8), Glow::Umbral),
         Make::Brazier => (Vec3::new(0.0, 1.6, 0.0), Glow::Dwarven),
@@ -386,7 +387,7 @@ fn light_of(s: &Site) -> Option<(Vec3, Glow)> {
         }
         _ => return None,
     };
-    Some((s.at + s.rot * local, glow))
+    Some((s.at + s.rot * local, s.rot * Vec3::Y, glow))
 }
 
 /// A place worth a look: its name, where, its up, its front.
