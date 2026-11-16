@@ -289,25 +289,154 @@ impl Rock {
     /// that much larger, for the far scenery).
     pub fn broken(&self, p: Vec3, scale: f32) -> f32 {
         let p = p / scale;
-        // Masses, cut into benches: flat treads, steep risers, each bench
-        // its own height so no two cliffs are alike.
-        let mass = self.fbm(p * 0.014, 4);
-        let steps = mass * 8.0 + self.fbm(p * 0.05 + Vec3::splat(5.0), 2) * 0.8;
+        // The mass of it is eroded relief: its detail fades where it is
+        // already steep, so slopes, and how fast slopes change, differ
+        // from place to place.
+        let mass = Self::eroded(Self::drained(p * 0.0045, 0.35), 7) * 9.0;
+        // Quiet stretches and shattered ones: the same rock is not broken
+        // equally everywhere.
+        let busy = smooth(
+            -0.3,
+            0.35,
+            self.noise.fbm3(p * 0.0052 + Vec3::splat(88.0), 2, 2.0, 0.5),
+        );
+        // Cut into benches: flat treads, steep risers, each bench its own
+        // height so no two cliffs are alike.
+        let lay = self.fbm(p * 0.014, 4);
+        let steps = lay * 8.0 + self.fbm(p * 0.05 + Vec3::splat(5.0), 2) * 0.8;
         let tread = steps.floor();
         let riser = smooth(0.72, 0.98, steps - tread);
-        let benches = ((tread + riser) / 8.0 - 0.5) * 30.0;
+        let benches = ((tread + riser) / 8.0 - 0.5) * 30.0 * (0.12 + 0.88 * busy);
         // Joints: blocks at three sizes, each standing a little proud or
         // set back, with the joint between them cut in.
         let (big, big_edge) = Self::cells(p / 23.0 + Vec3::splat(3.3));
         let (mid, mid_edge) = Self::cells(p / 9.0 + Vec3::splat(17.1));
         let (small, small_edge) = Self::cells(p / 3.6 + Vec3::splat(41.7));
-        let blocks = big * 4.2 + mid * 1.7 + small * 0.55
-            - (1.0 - smooth(0.0, 0.06, big_edge)) * 2.2
-            - (1.0 - smooth(0.0, 0.08, mid_edge)) * 0.9
-            - (1.0 - smooth(0.0, 0.1, small_edge)) * 0.3;
+        let blocks = (big * 4.2 + mid * 1.7 - (1.0 - smooth(0.0, 0.06, big_edge)) * 2.2)
+            * (0.1 + 0.9 * busy)
+            + (small * 0.55
+                - (1.0 - smooth(0.0, 0.08, mid_edge)) * 0.9
+                - (1.0 - smooth(0.0, 0.1, small_edge)) * 0.3)
+                * (0.4 + 0.6 * busy);
         // Crags where the rock is hardest.
-        let crags = smooth(0.45, 0.85, self.ridged(p * 0.03 + Vec3::splat(40.0), 4)) * 9.0;
-        (benches + blocks + crags) * scale
+        let crags = smooth(0.45, 0.85, self.ridged(p * 0.03 + Vec3::splat(40.0), 4)) * 9.0 * busy;
+        (mass + benches + blocks + crags + Self::gouges(p)) * scale
+    }
+
+    /// A number in 0..1 for the lattice point `x`, `y`, `z` and key `k`.
+    fn lattice(x: i32, y: i32, z: i32, k: u32) -> f32 {
+        let mut h = (x as u32).wrapping_mul(0x8da6_b343)
+            ^ (y as u32).wrapping_mul(0xd816_3841)
+            ^ (z as u32).wrapping_mul(0xcb1a_b31f)
+            ^ k.wrapping_mul(0x9e37_79b9);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2c1b_3c6d);
+        h ^= h >> 12;
+        h = h.wrapping_mul(0x297a_2d39);
+        h ^= h >> 15;
+        (h & 0xffff) as f32 / 65535.0
+    }
+
+    /// Value noise in -1..1 at `p` with its slope (Quilez, "more noise").
+    fn value_and_slope(p: Vec3) -> (f32, Vec3) {
+        let base = p.floor();
+        let w = p - base;
+        let u = w * w * w * (w * (w * 6.0 - 15.0) + 10.0);
+        let du = 30.0 * w * w * (w * (w - 2.0) + 1.0);
+        let (x, y, z) = (base.x as i32, base.y as i32, base.z as i32);
+        let at = |dx: i32, dy: i32, dz: i32| Self::lattice(x + dx, y + dy, z + dz, 77);
+        let (a, b, c, d) = (at(0, 0, 0), at(1, 0, 0), at(0, 1, 0), at(1, 1, 0));
+        let (e, f, g, h) = (at(0, 0, 1), at(1, 0, 1), at(0, 1, 1), at(1, 1, 1));
+        let (k0, k1, k2, k3) = (a, b - a, c - a, e - a);
+        let (k4, k5, k6) = (a - b - c + d, a - c - e + g, a - b - e + f);
+        let k7 = -a + b + c - d + e - f - g + h;
+        let value = k0
+            + k1 * u.x
+            + k2 * u.y
+            + k3 * u.z
+            + k4 * u.x * u.y
+            + k5 * u.y * u.z
+            + k6 * u.z * u.x
+            + k7 * u.x * u.y * u.z;
+        let slope = Vec3::new(
+            k1 + k4 * u.y + k6 * u.z + k7 * u.y * u.z,
+            k2 + k5 * u.z + k4 * u.x + k7 * u.z * u.x,
+            k3 + k6 * u.x + k5 * u.y + k7 * u.x * u.y,
+        );
+        (-1.0 + 2.0 * value, 2.0 * du * slope)
+    }
+
+    /// Eroded relief at `p`, about -2..2 (the mountain formula of
+    /// OrrunWithEngine, after Quilez, in three dimensions): each finer
+    /// layer is weakened where the layers before it are already steep.
+    /// Steep faces stay clean, crests and floors carry the detail, and no
+    /// two slopes are alike.
+    pub fn eroded(p: Vec3, octaves: u32) -> f32 {
+        let (mut sum, mut amp, mut steep, mut p) = (0.0, 1.0, Vec3::ZERO, p);
+        for _ in 0..octaves {
+            let (n, slope) = Self::value_and_slope(p);
+            steep += slope;
+            sum += amp * n / (1.0 + steep.length_squared());
+            amp *= 0.5;
+            // Turn and double, so the layers do not line up.
+            p = Vec3::new(
+                0.8 * p.y + 0.6 * p.z,
+                -0.8 * p.x + 0.36 * p.y - 0.48 * p.z,
+                -0.6 * p.x - 0.48 * p.y + 0.64 * p.z,
+            ) * 2.0;
+        }
+        sum
+    }
+
+    /// `p` pushed along the slope of a slow second field, so that crests
+    /// bunch up and drain instead of repeating at one spacing.
+    pub fn drained(p: Vec3, amount: f32) -> Vec3 {
+        let (_, a) = Self::value_and_slope(p * 0.9 + Vec3::splat(13.7));
+        let q = p + a * amount;
+        let (_, b) = Self::value_and_slope(q * 2.3 + Vec3::splat(57.1));
+        q + b * amount * 0.38
+    }
+
+    /// Gouges: here and there a single ravine cut into the rock, of its
+    /// own length, width and depth, with a raised shoulder on either
+    /// side. Each is placed on its own; none repeats.
+    fn gouges(p: Vec3) -> f32 {
+        const CELL: f32 = 95.0;
+        let q = p / CELL;
+        let base = q.floor();
+        let (bx, by, bz) = (base.x as i32, base.y as i32, base.z as i32);
+        let mut out = 0.0_f32;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let (x, y, z) = (bx + dx, by + dy, bz + dz);
+                    let r = |k: u32| Self::lattice(x, y, z, 200 + k);
+                    if r(0) > 0.3 {
+                        continue;
+                    }
+                    let at = Vec3::new(x as f32 + r(1), y as f32 + r(2), z as f32 + r(3)) * CELL;
+                    let along = Vec3::new(r(4) - 0.5, r(5) - 0.5, r(6) - 0.5).normalize_or(Vec3::X);
+                    let half_length = 28.0 + 50.0 * r(7);
+                    let half_width = 3.0 + 7.0 * r(8) * r(8);
+                    let depth = 2.5 + 8.0 * r(9);
+                    let rel = p - at;
+                    let l = rel.dot(along);
+                    if l.abs() >= half_length {
+                        continue;
+                    }
+                    let fade = 1.0 - smooth(0.55, 1.0, l.abs() / half_length);
+                    let across = (rel - along * l).length();
+                    let cut = (1.0 - (across / half_width).min(1.0)).powf(1.35);
+                    let v = ((across - half_width) / (half_width * 1.2)).clamp(0.0, 1.0);
+                    let shoulder = (4.0 * v * (1.0 - v)).powi(2);
+                    let g = (-depth * cut + depth * 0.42 * shoulder) * fade;
+                    if g.abs() > out.abs() {
+                        out = g;
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// How far (metres along the ground) the point at `theta`, `rho` from

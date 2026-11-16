@@ -243,17 +243,56 @@ impl Spire {
         let theta = t * TAU;
         let ring = side * theta.cos() + up * theta.sin();
         let key = Vec3::splat(self.seed as f32 * 1.93);
-        // Roots spread into the wall in buttresses; higher up the section
-        // is lobed, never round.
-        let root = (1.0 - smooth(0.0, 0.28, u)).powi(2);
+        // No spire is round. One side of it is a cliff and the other a long
+        // slope, and which side that is turns slowly along it.
+        let facing = hash(self.seed, 61) * TAU
+            + 2.4 * noise.fbm3(Vec3::new(u * 1.3, 4.0, key.x), 2, 2.0, 0.5);
+        let lee = (theta - facing).cos();
+        let lean = 0.25 + 0.55 * hash(self.seed, 62);
+        let flank = 1.0 + lean * if lee > 0.0 { lee.powf(1.5) } else { 0.45 * lee };
+        // The root: a headwall, then a break in the slope, then an apron of
+        // fallen rock running out onto the wall, far longer on the long
+        // side than under the cliff.
+        let reach = 0.14 + 0.24 * hash(self.seed, 63);
+        let brk = 0.2 + 0.2 * hash(self.seed, 64);
+        let v = (u / reach).min(1.0);
+        let fall = if v < brk {
+            1.0 - 0.66 * v / brk
+        } else {
+            0.34 * (1.0 - (v - brk) / (1.0 - brk)).powf(1.25)
+        };
+        let root = fall * (1.0 + 0.9 * hash(self.seed, 65)) * (1.0 + 0.8 * lee.max(-0.6));
+        // Side ridges: a few crests that run up it from the root, each
+        // steep on one side, each ending at its own height.
+        let mut ridges = 0.0_f32;
+        for i in 0..2 + (hash(self.seed, 66) * 3.0) as u32 {
+            let k = 70 + i * 6;
+            let turn = hash(self.seed, k) * TAU + (hash(self.seed, k + 1) - 0.5) * 2.5 * u;
+            let top = 0.25 + 0.6 * hash(self.seed, k + 2);
+            if u >= top {
+                continue;
+            }
+            let off =
+                ((theta - turn + PI).rem_euclid(TAU) - PI) * if i % 2 == 0 { 1.0 } else { -1.0 };
+            let half = if off > 0.0 { 0.22 } else { 0.7 } * (0.6 + 0.8 * hash(self.seed, k + 3));
+            let d = (off.abs() / half).min(1.0);
+            let across = if d < 0.3 {
+                1.0 - 0.66 * d / 0.3
+            } else {
+                0.34 * (1.0 - (d - 0.3) / 0.7).powf(1.25)
+            };
+            let crest = (1.0 - u / top).powf(0.7 + hash(self.seed, k + 4));
+            ridges = ridges.max(across * crest * (0.5 + 0.9 * hash(self.seed, k + 5)));
+        }
+        // Lobes on top of that, most at the root.
         let lobes = noise.fbm3(
             Vec3::new(theta.cos(), theta.sin(), u * 2.2) * 1.2 + key,
             3,
             2.0,
             0.5,
         );
-        let section = 1.0 + (0.3 + 0.6 * root) * lobes;
-        let girth = self.girth(noise, u) + self.radius * 1.5 * root;
+        let section = flank * (1.0 + (0.25 + 0.3 * fall) * lobes);
+        let girth = self.girth(noise, u) + self.radius * (root + ridges);
         // Broken rock on it, in some stretches hardly any, in others a lot.
         let on = ring * self.radius + Vec3::new(0.0, 0.0, u * self.length) + key * 40.0;
         let busy = smooth(
@@ -315,7 +354,10 @@ impl Cavern {
         };
         // Vaults and bays kilometres wide, buttresses, ribs, ledges: all of
         // it into the hollow or back from it.
-        let vaults = (self.fbm(on / 3100.0, 4) - 0.5) * 1500.0;
+        // Eroded relief: ranges and basins whose slopes differ everywhere.
+        let vaults =
+            rock::Rock::eroded(rock::Rock::drained(on / 4600.0 + Vec3::splat(21.3), 0.3), 8)
+                * 460.0;
         // On them the rock is broken as rock breaks, at the size of the
         // wall: benches and cliffs hundreds of metres high, great blocks.
         let broken = rock::shared().broken(on, 12.0) * 1.2;
