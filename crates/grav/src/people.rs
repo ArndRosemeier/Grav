@@ -19,7 +19,7 @@ use actors_human::RaceId;
 use engine::anim::AnimatedModel;
 use engine::glam::Mat3;
 use engine::prelude::*;
-use grav_core::{BodyQuery, Field};
+use grav_core::{BodyQuery, Field, Movement};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
@@ -120,9 +120,6 @@ struct Loose {
     down: f32,
 }
 
-/// A stone's pull this strong against the world's own takes people off
-/// their feet.
-const TAKES: f32 = 0.55;
 /// They get up this long after it has let go.
 const GETS_UP: f32 = 2.5;
 /// A person as a body: a capsule this tall from feet to middle, this wide.
@@ -138,6 +135,8 @@ pub struct People {
     made: Option<Receiver<Made>>,
     persons: Vec<Person>,
     roads: Vec<Road>,
+    /// The hero's movement numbers: people stand on their feet as he does.
+    movement: Movement,
     /// How many are running from a stone this frame.
     pub fleeing: usize,
     /// How many a pull has off their feet or off their road this frame.
@@ -157,9 +156,10 @@ impl Movable for People {
         p.loose.is_none().then_some(p.at)
     }
 
-    /// People stand on their legs: it takes a pull of half the world's own.
-    fn grip(&self) -> f32 {
-        TAKES
+    /// People stand on their legs as the hero does (grav-core's footing
+    /// rule with his numbers).
+    fn grip(&self, pull: Vec3) -> f32 {
+        grav_core::grip(&self.movement, pull)
     }
 
     /// Off their feet: a body for physics to move, which the person is
@@ -238,7 +238,7 @@ fn make(dir: String, send: std::sync::mpsc::Sender<Made>) -> Result<(), String> 
 
 impl People {
     /// Start making the people (they come into the world as they are done).
-    pub fn new(unseen: CustomMaterialId) -> Self {
+    pub fn new(unseen: CustomMaterialId, movement: Movement) -> Self {
         let roads = vec![
             Road::Spire,
             Road::Lane(-1.0),
@@ -265,6 +265,7 @@ impl People {
             made,
             persons: Vec::new(),
             roads,
+            movement,
             fleeing: 0,
             taken: 0,
             lost: 0,
@@ -347,6 +348,7 @@ impl People {
         self.fleeing = 0;
         self.taken = 0;
         let mut gone = Vec::new();
+        let movement = self.movement;
         for (index, p) in self.persons.iter_mut().enumerate() {
             let (from, to, _) = p.road.span();
             let Some(at) = p.road.at(rock, p.s, p.off) else {
@@ -363,7 +365,8 @@ impl People {
                     let middle = world.world_transform(body)?.w_axis.truncate();
                     l.at = middle - up * MIDDLE;
                     let slow = world.body_velocity(body).is_none_or(|v| v.length() < 1.0);
-                    let held = movable::held(field, base, l.at, TAKES);
+                    let held =
+                        movable::held(field, base, l.at, |pull| grav_core::grip(&movement, pull));
                     l.down = if slow && !held { l.down + dt } else { 0.0 };
                     if slow {
                         pose = None;

@@ -87,6 +87,7 @@ fn load_tuning() -> Tuning {
 
 fn setup(world: &mut World) -> EngineResult<Game> {
     let tuning = load_tuning();
+    let movement = tuning.movement;
     let look = look::Look::new(world, space::HEART_CENTER)?;
     look.light_and_air(world)?;
     world.set_physics_settings(PhysicsSettings {
@@ -123,7 +124,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         meter,
         town,
         goods,
-        people: people::People::new(look.unseen),
+        people: people::People::new(look.unseen, movement),
         hero,
         pull: FieldParts::default(),
         boxes,

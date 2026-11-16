@@ -356,10 +356,10 @@ impl Movable for Goods {
         (!self.loose[k][n]).then(|| self.kinds[k].places[n].position)
     }
 
-    /// Goods only stand there: any pull to speak of makes them bodies,
-    /// and what they do then is up to their weight and the ground.
-    fn grip(&self) -> f32 {
-        0.05
+    /// Goods only stand there: the friction of a crate on rock, the same
+    /// as their body has once loose.
+    fn grip(&self, _pull: Vec3) -> f32 {
+        grav_core::ROCK_FRICTION
     }
 
     fn let_go(&mut self, world: &mut World, i: usize) -> EngineResult<()> {

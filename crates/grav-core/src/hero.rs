@@ -147,18 +147,31 @@ pub fn press_and_drag(accel: Vec3, normal: Vec3) -> (f32, Vec3) {
     (press, accel + n * press)
 }
 
+/// Friction of things on rock (a crate, rubble): the share of the press
+/// onto the ground they withstand along it. Loose bodies get the same in
+/// physics.
+pub const ROCK_FRICTION: f32 = 0.6;
+
+/// The footing rule for anything standing on rock (the hero, people,
+/// goods): it holds while the pull presses it onto its ground (normal
+/// `normal`) and pulls along the ground no harder than `grip` times that
+/// press. Every check of "does it stay put" goes through here.
+pub fn footing_holds(grip: f32, accel: Vec3, normal: Vec3) -> bool {
+    let (press, drag) = press_and_drag(accel, normal);
+    press > 0.0 && drag.length() <= grip * press
+}
+
 /// P9: the slide velocity along the ground after `dt` seconds, from `v`.
 /// A standing hero stays put while his grip holds the pull along the
 /// ground; once he slides, the drag speeds him and friction brakes him, so
 /// a slide on rock dies away within moments where the ground levels off.
 pub fn slide_step(m: &Movement, accel: Vec3, normal: Vec3, v: Vec3, dt: f32) -> Vec3 {
-    let (press, drag) = press_and_drag(accel, normal);
-    let press = press.max(0.0);
-    let hold = grip(m, accel) * press;
-    if v.length() < 1e-3 && drag.length() <= hold {
+    let grip = grip(m, accel);
+    if v.length() < 1e-3 && footing_holds(grip, accel, normal) {
         return Vec3::ZERO;
     }
-    let brake = hold * m.slide_friction * dt;
+    let (press, drag) = press_and_drag(accel, normal);
+    let brake = grip * press.max(0.0) * m.slide_friction * dt;
     let moved = v + drag * dt;
     let speed = moved.length();
     if speed <= brake {
