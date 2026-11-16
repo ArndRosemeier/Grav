@@ -492,7 +492,16 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
         let quarrel = gv_cells(p * vec3<f32>(9.0, 6.0, 9.0));
         let lead = 1.0 - smoothstep(0.0, 0.07, quarrel.y);
         let flick = 0.82 + 0.18 * sin(m.time * (1.0 + quarrel.x * 0.1) * 2.3 + gv_noise(m.world_pos * 0.5) * 40.0);
-        let lit = m.uv.x * (0.55 + 0.6 * quarrel.x) * (1.0 - lead) * flick;
+        // There is a room behind the glass: its light and its dark
+        // things lie a stride inside, so they shift behind the leading as
+        // the eye moves, and each quarrel bends the view a little.
+        let nw = normalize(m.normal);
+        let eye = normalize(m.view_dir) * sign(dot(nw, m.view_dir));
+        let inside = m.world_pos - eye * (1.3 / max(dot(nw, eye), 0.25)) + (quarrel.x - 0.5) * 0.12;
+        let lamp = smoothstep(0.35, 0.8, gv_noise(inside * 0.8 + 3.0));
+        let things = smoothstep(0.5, 0.62, gv_noise(inside * vec3<f32>(2.3, 1.1, 2.3) + 21.0));
+        let room = (0.3 + 1.25 * lamp) * (1.0 - 0.7 * things);
+        let lit = m.uv.x * (0.55 + 0.6 * quarrel.x) * (1.0 - lead) * flick * room;
         c = c * (0.25 + 0.2 * quarrel.x) * (1.0 - 0.8 * lead);
         emission = base.color.rgb * base.color.rgb * lit * 1.35;
         rough = 0.18;
