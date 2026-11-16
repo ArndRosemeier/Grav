@@ -455,6 +455,16 @@ fn growth_views() -> Vec<View> {
             zoom: false,
         });
     }
+    // The hanging lake, from beside it, the island overhead.
+    let (lake, lake_rot) = space::island_frame(Vec3::NEG_Y);
+    let lake_up = lake_rot * Vec3::Y;
+    views.push(View {
+        name: "the lake hanging under the island",
+        eye: lake + lake_up * 9.0 + Vec3::new(14.0, 0.0, -10.0),
+        target: lake + lake_up * 0.5,
+        up: lake_up,
+        zoom: false,
+    });
     views
 }
 

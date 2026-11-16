@@ -1,6 +1,7 @@
 //! Water you can move: 3D fluid boxes (engine `Fluid`) that follow the
-//! field, stones included. For now the town's spring basin; other standing
-//! water is drawn from the water map (`wet.rs`).
+//! field, stones included: the town's spring basin and the lake that
+//! hangs under the island. Other standing water is drawn from the water
+//! map (`wet.rs`).
 
 use crate::space;
 use engine::prelude::*;
@@ -18,12 +19,18 @@ pub struct Basin {
     /// The basin's middle on the rock surface, and its frame.
     pub at: Vec3,
     pub rot: Quat,
+    /// How far from `at` the water reaches.
+    pub reach: f32,
+    /// Seconds since something last stirred it.
+    calm: f32,
 }
 
 pub struct Waters {
     pub pool: Basin,
-    /// Seconds since something last stirred the pool.
-    calm: f32,
+    /// The hanging lake, once it has settled (on a worker thread: it takes
+    /// a few seconds).
+    pub lake: Option<Basin>,
+    lake_job: Option<std::thread::JoinHandle<EngineResult<Fluid>>>,
 }
 
 /// The town's spring: its basin is a hollow in the spire's own rock
@@ -59,14 +66,67 @@ fn build_spring(world: &mut World) -> EngineResult<Basin> {
             && !rock.in_spire(p)
     });
     let id = world.add_fluid(fluid)?;
-    Ok(Basin { fluid: id, at, rot })
+    Ok(Basin {
+        fluid: id,
+        at,
+        rot,
+        reach: SPRING_BASIN_RADIUS,
+        calm: 0.0,
+    })
 }
+
+/// The lake under the island: its vein holds the water up in a bowl cut
+/// into the underside, against the heart's push (A-rules: a hanging lake).
+/// It is filled to a hand under the lip and left to find its level
+/// before the game starts, so it hangs as the field has it, not as a
+/// sphere. Runs on a worker thread.
+fn settle_lake() -> EngineResult<Fluid> {
+    use crate::rock::{LAKE_ANGLE, LAKE_DEPTH};
+    use space::{ISLAND_CENTER, ISLAND_RADIUS};
+    let across = lake_across();
+    let lo = ISLAND_CENTER + Vec3::new(-across, -ISLAND_RADIUS - 1.5, -across);
+    let hi = ISLAND_CENTER + Vec3::new(across, -ISLAND_RADIUS + LAKE_DEPTH + 1.0, across);
+    let mut fluid = Fluid::new(
+        FluidSettings::new(lo, hi - lo, 0.4)
+            .color(rgba(18, 52, 66, 200))
+            .mesh_every(2),
+    )?;
+    let rock = crate::rock::shared();
+    fluid.mark_solid(|p| rock.in_island(p));
+    let level = ISLAND_RADIUS - 0.25;
+    fluid.fill(|p| {
+        let d = p - ISLAND_CENTER;
+        d.length() < level
+            && d.normalize_or_zero().dot(Vec3::NEG_Y) > (LAKE_ANGLE * 0.95).cos()
+            && !rock.in_island(p)
+    });
+    // Let it settle in the field it lives in, until it is still.
+    let field = space::base_field();
+    let pull = |p: Vec3| field.acceleration(&grav_core::BodyQuery::at(p));
+    for _ in 0..LAKE_SETTLE_STEPS {
+        fluid.step(1.0 / 30.0, pull);
+    }
+    Ok(fluid)
+}
+
+/// How far the lake's box reaches from its middle, each way.
+fn lake_across() -> f32 {
+    space::ISLAND_RADIUS * crate::rock::LAKE_ANGLE.sin() * 1.25
+}
+
+/// Steps of 1/30 s the lake is given to come to rest before it is shown.
+const LAKE_SETTLE_STEPS: usize = 240;
 
 pub fn build(world: &mut World) -> EngineResult<Waters> {
     // The spring basin in the town, a little to the side of where the
     // hero starts.
     let pool = build_spring(world)?;
-    Ok(Waters { pool, calm: 0.0 })
+    let lake_job = Some(std::thread::spawn(settle_lake));
+    Ok(Waters {
+        pool,
+        lake: None,
+        lake_job,
+    })
 }
 
 impl Waters {
@@ -82,22 +142,49 @@ impl Waters {
         field: &grav_core::Field,
         dt: f32,
     ) -> EngineResult<()> {
-        let reach = crate::rock::SPRING_BASIN_RADIUS + SETTLE_MARGIN;
-        let at = self.pool.at;
-        let stirred = at.distance(hero_at) < reach
-            || field
-                .sources
-                .iter()
-                .any(|s| s.opening > 0.0 && s.position.distance(at) < s.radius + reach);
-        self.calm = if stirred { 0.0 } else { self.calm + dt };
-        let awake = at.distance(hero_at) < AWAKE_DISTANCE
-            && self.calm < SETTLE_SECONDS
-            && std::env::var("GRAV_WATER_ASLEEP").is_err();
-        world.set_fluid_awake(self.pool.fluid, awake)
+        if self.lake_job.as_ref().is_some_and(|j| j.is_finished()) {
+            if let Some(job) = self.lake_job.take() {
+                let fluid = job.join().map_err(|_| {
+                    EngineError::InvalidValue("the hanging lake's worker panicked".into())
+                })??;
+                let (at, rot) = space::island_frame(Vec3::NEG_Y);
+                self.lake = Some(Basin {
+                    fluid: world.add_fluid(fluid)?,
+                    at,
+                    rot,
+                    reach: lake_across(),
+                    calm: SETTLE_SECONDS,
+                });
+            }
+        }
+        for basin in std::iter::once(&mut self.pool).chain(self.lake.as_mut()) {
+            let reach = basin.reach + SETTLE_MARGIN;
+            let at = basin.at;
+            let stirred = at.distance(hero_at) < reach
+                || field
+                    .sources
+                    .iter()
+                    .any(|s| s.opening > 0.0 && s.position.distance(at) < s.radius + reach);
+            basin.calm = if stirred { 0.0 } else { basin.calm + dt };
+            let awake = at.distance(hero_at) < AWAKE_DISTANCE
+                && basin.calm < SETTLE_SECONDS
+                && std::env::var("GRAV_WATER_ASLEEP").is_err();
+            world.set_fluid_awake(basin.fluid, awake)?;
+        }
+        Ok(())
     }
 
+    /// The spring's water, in cubic metres.
     pub fn volume(&self, world: &World) -> f32 {
         world.fluid(self.pool.fluid).map_or(0.0, |f| f.volume())
+    }
+
+    /// The hanging lake's water, in cubic metres.
+    pub fn lake_volume(&self, world: &World) -> f32 {
+        self.lake
+            .as_ref()
+            .and_then(|l| world.fluid(l.fluid))
+            .map_or(0.0, |f| f.volume())
     }
 }
 

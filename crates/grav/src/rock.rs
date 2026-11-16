@@ -49,6 +49,12 @@ const SPRING_BASIN_DEPTH: f32 = 1.7;
 /// rock): enough to keep its basin full and a brook running from it.
 const SPRING_FLOW: f32 = 3200.0;
 
+/// The hanging lake under the island: its bowl reaches this far (as an
+/// angle from straight down, seen from the island's centre) and is this
+/// deep below the island's surface.
+pub const LAKE_ANGLE: f32 = 0.42;
+pub const LAKE_DEPTH: f32 = 3.2;
+
 /// The ring road around the flare's foot, this far from the axis.
 pub const RING_ROAD: f32 = 137.0;
 
@@ -636,6 +642,18 @@ impl Rock {
         let mass = (self.fbm(on * 0.035 + Vec3::splat(90.0), 4) - 0.4) * 12.0;
         let crags = (self.ridged(on * 0.09 + Vec3::splat(14.0), 3) - 0.3) * 6.0;
         ISLAND_RADIUS + gentle * swell + (1.0 - gentle) * (mass + crags).max(-4.0)
+            - Self::lake_bowl(dir)
+    }
+
+    /// How deep the hanging lake's bowl is cut into the island's
+    /// underside in direction `dir` (unit) from its centre: a round hollow
+    /// with a raised lip, its floor uneven.
+    pub fn lake_bowl(dir: Vec3) -> f32 {
+        let a = dir.dot(Vec3::NEG_Y).clamp(-1.0, 1.0).acos() / LAKE_ANGLE;
+        let floor = (1.0 - a * a).max(0.0);
+        let lip = (-(a - 1.12).powi(2) / 0.012).exp();
+        let uneven = 1.0 + 0.12 * (dir.x * 31.0).sin() * (dir.z * 27.0).cos();
+        LAKE_DEPTH * floor.sqrt() * uneven - 0.5 * lip
     }
 
     /// A point on the island's surface.
@@ -1220,10 +1238,14 @@ mod tests {
     #[ignore = "full"]
     fn the_island_keeps_its_perch_and_lake_bed() {
         let rock = Rock::new();
-        for dir in [Vec3::NEG_Y, Vec3::new(0.0, 1.0, 0.2).normalize()] {
-            let r = rock.island_radius(dir);
-            assert!((ISLAND_RADIUS..ISLAND_RADIUS + 0.8).contains(&r), "{r}");
-        }
+        let perch = rock.island_radius(Vec3::new(0.0, 1.0, 0.2).normalize());
+        assert!(
+            (ISLAND_RADIUS..ISLAND_RADIUS + 0.8).contains(&perch),
+            "{perch}"
+        );
+        // The lake's bowl is a hollow under the island.
+        let bed = rock.island_radius(Vec3::NEG_Y);
+        assert!(bed < ISLAND_RADIUS - LAKE_DEPTH + 0.8, "{bed}");
     }
 
     #[test]

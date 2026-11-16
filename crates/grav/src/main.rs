@@ -371,6 +371,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("goods_loose", g.goods.loose_total);
     world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));
+    world.report("lake_m3", g.waters.lake_volume(world));
     Ok(())
 }
 

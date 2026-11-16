@@ -494,8 +494,8 @@ impl Boxes {
         match aim {
             Some(a) => {
                 world.set_place(self.ghost.root, place(a.rest, a.frame))?;
-                for c in 0..2 {
-                    for (k, fan) in self.ghost.fans[c].iter().enumerate() {
+                for (c, fans) in self.ghost.fans.iter().enumerate() {
+                    for (k, fan) in fans.iter().enumerate() {
                         let on = c == charge && mask & (1 << k) != 0;
                         world.set_place(
                             *fan,
