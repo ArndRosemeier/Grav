@@ -5,7 +5,7 @@
 //! the new pull at once (Arnd, 2026-11-16).
 //!
 //! The clumps are kept in patches of ground. A patch near the eye is
-//! drawn fine, further off light, far away not at all; a patch in reach
+//! drawn fine, further off in two lighter levels, far away not at all; a patch in reach
 //! of an open stone has its stalks turned to the field every frame.
 
 use crate::flora::{fine, hash, Form};
@@ -24,22 +24,26 @@ pub struct Blade {
 }
 
 /// The side of a patch, in metres.
-const PATCH: f32 = 48.0;
-/// Patches nearer than this are drawn fine, then light up to `FAR`.
-const NEAR: f32 = 60.0;
-const FAR: f32 = 170.0;
+const PATCH: f32 = 24.0;
+/// How far each level of detail is drawn, finest first. Beyond the last
+/// there is no grass.
+const REACH: [f32; 3] = [26.0, 75.0, 170.0];
+/// Slack at each line, so a patch on it does not flicker.
+const SLACK: f32 = 5.0;
 
 struct Patch {
     center: Vec3,
     blades: Vec<Blade>,
     /// The places in the world's own pull, with no stone open.
     rest: Vec<Place>,
-    fine: EntityId,
-    light: EntityId,
-    /// 0 drawn fine, 1 light, 2 not drawn; 3 not yet set.
-    shown: u8,
+    /// One drawn set for each level of detail.
+    levels: [EntityId; 3],
+    /// The level drawn (3: none), or `UNSET`.
+    shown: usize,
     bent: bool,
 }
+
+const UNSET: usize = 4;
 
 pub struct Grass {
     patches: Vec<Patch>,
@@ -51,7 +55,7 @@ pub struct Grass {
 /// at its tip.
 pub fn clump(detail: u32) -> EngineResult<Mesh> {
     let mut f = Form::new();
-    let stalks = fine(detail, 5, 3, 3);
+    let stalks = fine(detail, 5, 4, 3);
     for s in 0..stalks {
         let k = 4000 + s as u32;
         let turn = (s as f32 + hash(k, 1)) / stalks as f32 * std::f32::consts::TAU;
@@ -60,9 +64,12 @@ pub fn clump(detail: u32) -> EngineResult<Mesh> {
         // Straight, and nearly parallel: the clump is a plumb line.
         let dir = (Vec3::Y + out * 0.035 * hash(k, 3)).normalize();
         let length = 0.75 + 0.75 * hash(k, 4);
-        let thick = if detail == 0 { 0.009 } else { 0.017 };
+        // Thicker with distance, or the wires would vanish between pixels.
+        let thick = [0.009, 0.013, 0.019][detail.min(2) as usize];
+        let spine = [foot, foot + dir * length * 0.5, foot + dir * length];
+        let ends = [spine[0], spine[2]];
         f.tube(
-            &[foot, foot + dir * length * 0.5, foot + dir * length],
+            if detail < 2 { &spine } else { &ends },
             fine(detail, 5, 3, 3),
             &|t| thick * (1.0 - 0.55 * t),
             &|t| {
@@ -87,9 +94,9 @@ pub fn clump(detail: u32) -> EngineResult<Mesh> {
         f.drop(
             foot + dir * (length - 0.01),
             dir,
-            if detail == 0 { 0.017 } else { 0.026 },
+            [0.017, 0.022, 0.028][detail.min(2) as usize],
             0.16,
-            fine(detail, 8, 4, 4),
+            fine(detail, 8, 4, 3),
             (Vec3::new(0.8, 1.0, 0.86), 0.55),
         )?;
     }
@@ -113,11 +120,12 @@ impl Grass {
         blades: &[Blade],
         base: &Field,
     ) -> EngineResult<Self> {
-        let fine_shape = world.spawn_instanced(clump(0)?);
-        let light_shape = world.spawn_instanced(clump(1)?);
-        for shape in [fine_shape, light_shape] {
+        let mut shapes = Vec::new();
+        for detail in 0..3 {
+            let shape = world.spawn_instanced(clump(detail)?);
             world.set_custom_material(shape, material)?;
             world.set_casts_shadow(shape, false)?;
+            shapes.push(shape);
         }
         let mut by_patch: HashMap<(i32, i32, i32), Vec<Blade>> = HashMap::new();
         for blade in blades {
@@ -138,9 +146,12 @@ impl Grass {
                 center,
                 blades,
                 rest,
-                fine: world.spawn_instanced_like(fine_shape)?,
-                light: world.spawn_instanced_like(light_shape)?,
-                shown: 3,
+                levels: [
+                    world.spawn_instanced_like(shapes[0])?,
+                    world.spawn_instanced_like(shapes[1])?,
+                    world.spawn_instanced_like(shapes[2])?,
+                ],
+                shown: UNSET,
                 bent: false,
             });
         }
@@ -159,9 +170,10 @@ impl Grass {
     pub fn show(&mut self, world: &mut World, on: bool) -> EngineResult<()> {
         self.hidden = !on;
         for patch in &mut self.patches {
-            world.set_instances(patch.fine, &[])?;
-            world.set_instances(patch.light, &[])?;
-            patch.shown = 3;
+            for level in patch.levels {
+                world.set_instances(level, &[])?;
+            }
+            patch.shown = UNSET;
         }
         Ok(())
     }
@@ -174,16 +186,16 @@ impl Grass {
         }
         for patch in &mut self.patches {
             let d = patch.center.distance(eye);
-            // A little slack, so a patch on the line does not flicker.
-            let shown = match patch.shown {
-                0 if d < NEAR + 6.0 => 0,
-                1 if d > NEAR - 6.0 && d < FAR + 10.0 => 1,
-                2 if d > FAR - 10.0 => 2,
-                _ if d < NEAR => 0,
-                _ if d < FAR => 1,
-                _ => 2,
+            let level = |d: f32| REACH.iter().position(|&to| d < to).unwrap_or(3);
+            // It stays at its level while it is within the slack of it.
+            let shown = if patch.shown != UNSET
+                && (level(d - SLACK) == patch.shown || level(d + SLACK) == patch.shown)
+            {
+                patch.shown
+            } else {
+                level(d)
             };
-            let touched = shown < 2
+            let touched = shown < 3
                 && field.sources.iter().any(|s| {
                     s.opening > 0.0 && s.position.distance(patch.center) < s.radius + PATCH
                 });
@@ -197,8 +209,11 @@ impl Grass {
             } else {
                 &patch.rest
             };
-            world.set_instances(patch.fine, if shown == 0 { places } else { &[] })?;
-            world.set_instances(patch.light, if shown == 1 { places } else { &[] })?;
+            for (i, level) in patch.levels.into_iter().enumerate() {
+                if i == shown || i == patch.shown || patch.shown == UNSET {
+                    world.set_instances(level, if i == shown { places } else { &[] })?;
+                }
+            }
             patch.shown = shown;
             patch.bent = touched;
         }
@@ -241,6 +256,7 @@ mod tests {
     #[test]
     fn a_clump_is_light() {
         assert!(clump(0).unwrap().face_count() < 900);
-        assert!(clump(1).unwrap().face_count() < 120);
+        assert!(clump(1).unwrap().face_count() < 220);
+        assert!(clump(2).unwrap().face_count() < 80);
     }
 }
