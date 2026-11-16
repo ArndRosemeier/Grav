@@ -334,6 +334,100 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 }
 "#;
 
+/// What people build with. uv.y says which stuff a part is made of
+/// (settle.rs): 0 foamed rock, 1 lattice metal, 2 stone blocks, 3 iron,
+/// 4 wood, 5 a lit pane, 6 cloth. uv.x is the light it gives.
+const BUILT: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    var c = base.color.rgb;
+    let p = m.object_pos;
+    let kind = m.uv.y;
+    let n0 = normalize(m.normal);
+    var n = n0;
+    var rough = 0.8;
+    var metal = 0.0;
+    var emission = vec3<f32>(0.0);
+    let grit = (vec3<f32>(gv_noise(p * 37.0), gv_noise(p * 37.0 + 9.0), gv_noise(p * 37.0 + 17.0)) - 0.5);
+    if kind < 0.5 {
+        // Foamed rock: pale, full of small pores, cast in lifts that
+        // show as faint lines, streaked dark where water runs down it.
+        let pores = gv_cells(p * 15.0);
+        let fine_pores = gv_cells(p * 41.0 + 3.0);
+        let hole = smoothstep(0.62, 0.9, pores.x) * smoothstep(0.16, 0.05, pores.y - 0.22)
+            + smoothstep(0.7, 0.95, fine_pores.x) * 0.6 * smoothstep(0.2, 0.08, fine_pores.y - 0.2);
+        let lift = smoothstep(0.03, 0.0, abs(fract(p.y / 1.1 + gv_noise(p * 0.7) * 0.08) - 0.5) - 0.47);
+        let streak = smoothstep(0.55, 0.8, gv_noise(vec3<f32>(p.x * 3.0, p.y * 0.25, p.z * 3.0)));
+        c = c * (0.86 + 0.28 * gv_fbm3(p * 2.3)) * (1.0 - 0.34 * clamp(hole, 0.0, 1.0)) * (1.0 - 0.25 * lift) * (1.0 - 0.3 * streak);
+        rough = 0.86;
+        n = normalize(n + grit * 0.35 + n0 * 0.0);
+    } else if kind < 1.5 {
+        // Lattice metal: dark bronze gone green in patches.
+        let green = smoothstep(0.45, 0.75, gv_fbm3(p * 4.0));
+        c = mix(c, vec3<f32>(0.16, 0.42, 0.33), green * 0.6) * (0.75 + 0.5 * gv_noise(p * 30.0));
+        metal = mix(0.95, 0.3, green);
+        rough = mix(0.3, 0.75, green);
+    } else if kind < 2.5 {
+        // Stone blocks: heavy courses of uneven height, each block its
+        // own shade, the joints cut deep; some blocks carry metal.
+        let along = select(p.z, p.x, abs(n0.z) > abs(n0.x));
+        let row = floor(p.y / 0.46);
+        let h = gv_hash(vec3<f32>(row, 3.0, 7.0));
+        let u = along / (0.7 + 0.5 * h) + h * 5.0;
+        let block = vec3<f32>(floor(u), row, select(1.0, 2.0, abs(n0.z) > abs(n0.x)));
+        let own = gv_hash(block);
+        let ju = abs(fract(u) - 0.5);
+        let jv = abs(fract(p.y / 0.46) - 0.5);
+        let flat_top = smoothstep(0.6, 0.9, abs(n0.y));
+        let joint = max(smoothstep(0.45, 0.49, ju) * (0.46 * (0.7 + 0.5 * h) / 0.46), smoothstep(0.44, 0.49, jv)) * (1.0 - flat_top);
+        let vein = smoothstep(0.78, 0.92, gv_noise(p * vec3<f32>(5.0, 14.0, 5.0) + own * 20.0)) * step(0.7, own);
+        c = c * (0.5 + 0.8 * own) * (0.8 + 0.4 * gv_fbm3(p * 5.0)) * (1.0 - 0.72 * clamp(joint, 0.0, 1.0));
+        c = mix(c, vec3<f32>(0.5, 0.42, 0.3), vein * 0.7);
+        metal = vein * 0.8;
+        rough = mix(0.88, 0.4, vein);
+        n = normalize(n + grit * 0.5 * (1.0 - joint));
+    } else if kind < 3.5 {
+        // Iron: dark, hammered, rusting from the edges.
+        let rust = smoothstep(0.5, 0.8, gv_fbm3(p * 3.0 + 5.0));
+        c = mix(c * (0.8 + 0.4 * gv_noise(p * 24.0)), vec3<f32>(0.3, 0.12, 0.05) * (0.6 + 0.8 * gv_noise(p * 40.0)), rust * 0.7);
+        metal = mix(0.9, 0.1, rust);
+        rough = mix(0.45, 0.95, rust);
+        n = normalize(n + grit * 0.3);
+    } else if kind < 4.5 {
+        // Wood: grain along its length, grey with age.
+        let long = select(p.x, p.y, abs(n0.y) < 0.6);
+        let grain = gv_noise(vec3<f32>(p.x * 31.0, long * 1.3, p.z * 31.0));
+        let knots = smoothstep(0.8, 0.95, gv_noise(p * vec3<f32>(6.0, 2.0, 6.0)));
+        c = c * (0.6 + 0.7 * grain) * (1.0 - 0.6 * knots);
+        c = mix(c, vec3<f32>(dot(c, vec3<f32>(0.33))), 0.35 * gv_fbm3(p * 1.5));
+        rough = 0.9;
+        n = normalize(n + grit * 0.4);
+    } else if kind < 5.5 {
+        // A lit pane: leaded into small quarrels, each a little its own
+        // brightness, the light behind it never quite still.
+        let quarrel = gv_cells(p * vec3<f32>(9.0, 6.0, 9.0));
+        let lead = 1.0 - smoothstep(0.0, 0.07, quarrel.y);
+        let flick = 0.82 + 0.18 * sin(m.time * (1.0 + quarrel.x * 0.1) * 2.3 + gv_noise(m.world_pos * 0.5) * 40.0);
+        let lit = m.uv.x * (0.55 + 0.6 * quarrel.x) * (1.0 - lead) * flick;
+        c = c * (0.25 + 0.2 * quarrel.x) * (1.0 - 0.8 * lead);
+        emission = base.color.rgb * base.color.rgb * lit * 1.35;
+        rough = 0.18;
+    } else {
+        // Cloth: a coarse weave, faded and stained.
+        let weave = 0.8 + 0.2 * sin(p.x * 260.0) * sin(p.y * 260.0);
+        let grime = gv_fbm3(p * 1.1 + 4.0);
+        c = mix(c, vec3<f32>(dot(c, vec3<f32>(0.33))), 0.45) * weave * (0.35 + 0.75 * grime);
+        rough = 1.0;
+    }
+    o.color = vec4<f32>(c, 1.0);
+    o.normal = n;
+    o.roughness = rough;
+    o.metallic = metal;
+    o.emission = emission;
+    return o;
+}
+"#;
+
 const CAVERN: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
@@ -361,6 +455,18 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var color = vec3<f32>(0.62, 0.66, 0.78) * tone;
     let ochre = smoothstep(0.62, 0.8, gv_noise(vec3<f32>(layer * 0.9, 8.0, 2.0)));
     color = mix(color, vec3<f32>(0.75, 0.62, 0.42) * tone, ochre * 0.55);
+
+    // What grows on it, seen from far off: mats in territories with bare
+    // lines between them (flora.rs draws the near ones one by one):
+    // crimson in the heart's light, violet in the shade, teal here and
+    // there where it is damp; none on the joints and the barest faces.
+    let ground = gv_cells(p * 0.0075 + 500.0 + (fold - 0.5) * 0.6);
+    let patchy = smoothstep(0.4, 0.6, gv_fbm3(p * 0.0024 + 90.0)) * (0.35 + 0.65 * ground.x);
+    let lit_side = smoothstep(0.1, 0.5, dot(n, l));
+    var hue = mix(vec3<f32>(0.34, 0.1, 0.6), vec3<f32>(0.62, 0.05, 0.12), lit_side);
+    hue = mix(hue, vec3<f32>(0.05, 0.5, 0.42), step(0.74, ground.x) * (1.0 - 0.6 * lit_side));
+    let grown = patchy * smoothstep(0.0, 0.05, ground.y) * (1.0 - joint);
+    color = mix(color, hue * (0.1 + 0.12 * mottle), grown * 0.8);
 
     // The heart's light: square on, the rock is bleached (L10); turned
     // away it keeps a little of the glow the mist carries everywhere.
@@ -434,6 +540,10 @@ pub struct Look {
     water: CustomMaterialId,
     /// What plants are made of.
     pub flora: CustomMaterialId,
+    /// What buildings are made of.
+    pub built: CustomMaterialId,
+    /// Draws nothing: for shapes that are only there to be solid.
+    pub unseen: CustomMaterialId,
     heart_dir: Vec3,
 }
 
@@ -474,8 +584,18 @@ impl Look {
             CustomMaterial::new("water on rock", format!("{NOISE}{WATER}")).see_through(),
         )?;
         let flora = world.add_material(CustomMaterial::new("flora", format!("{NOISE}{FLORA}")))?;
+        let built = world.add_material(CustomMaterial::new("built", format!("{NOISE}{BUILT}")))?;
+        let unseen = world.add_material(
+            CustomMaterial::new(
+                "unseen",
+                "fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {\n    var o = base;\n    o.color = vec4<f32>(0.0);\n    return o;\n}\n",
+            )
+            .see_through(),
+        )?;
         Ok(Self {
             flora,
+            built,
+            unseen,
             spire,
             wall,
             island,

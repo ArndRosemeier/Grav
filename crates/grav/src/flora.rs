@@ -28,13 +28,13 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::f32::consts::TAU;
 
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
+pub(crate) fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
 /// A number in 0..1 from `n` and a key.
-fn hash(n: u32, k: u32) -> f32 {
+pub(crate) fn hash(n: u32, k: u32) -> f32 {
     let mut h = n.wrapping_mul(0x9e37_79b9) ^ k.wrapping_mul(0x85eb_ca6b);
     h ^= h >> 16;
     h = h.wrapping_mul(0x7feb_352d);
@@ -616,9 +616,27 @@ fn grow_on(soil: &Soil, cover: &mut [Vec3], seed: u32, plants: &mut Vec<Plant>) 
 }
 
 /// Everything that grows on the spire and the wall. `heart` is the
-/// direction to the heart; `path` gives the metres from a point to the
+/// direction to the heart; `taken` is what is built (where, and how far
+/// around it is kept clear); `path` gives the metres from a point to the
 /// nearest road.
-pub fn grow(waters: &Waters, heart: Vec3, path: &dyn Fn(Vec3) -> f32) -> Growth {
+pub fn grow(
+    waters: &Waters,
+    heart: Vec3,
+    taken: &[(Vec3, f32)],
+    path: &dyn Fn(Vec3) -> f32,
+) -> Growth {
+    // What is built counts as road: nothing grows on it or right by it.
+    let mut built = Near::new(16.0);
+    for (i, &(p, _)) in taken.iter().enumerate() {
+        built.add(p, i as u32);
+    }
+    let path = |p: Vec3| {
+        built
+            .around(p)
+            .map(|(q, i)| q.distance(p) - taken[i as usize].1 + 3.0)
+            .fold(path(p), f32::min)
+    };
+    let path: &dyn Fn(Vec3) -> f32 = &path;
     let spire = Soil::new(&waters.spire, &waters.spire_water, heart, false, path);
     let wall = Soil::new(&waters.wall, &waters.wall_water, heart, true, path);
     let mut spire_cover = mats(&spire, 1000);
@@ -678,21 +696,21 @@ pub fn landmarks() -> &'static [Mark] {
 // The plants' shapes.
 
 /// A shape being built: points with normal, colour, glow.
-struct Form {
-    mesh: Mesh,
+pub(crate) struct Form {
+    pub(crate) mesh: Mesh,
     ids: Vec<PointId>,
     at: Vec<Vec3>,
     normal: Vec<Vec3>,
     /// What the next points are made of (the material reads it): 0 a
     /// waxy stem, 1 bark, 2 a skin of cells (caps, plates).
-    surface: f32,
+    pub(crate) surface: f32,
 }
 
 /// Colour and glow of a point.
-type Paint = (Vec3, f32);
+pub(crate) type Paint = (Vec3, f32);
 
 impl Form {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             mesh: Mesh::new(),
             ids: Vec::new(),
@@ -702,7 +720,7 @@ impl Form {
         }
     }
 
-    fn point(&mut self, p: Vec3, normal: Vec3, paint: Paint) -> EngineResult<usize> {
+    pub(crate) fn point(&mut self, p: Vec3, normal: Vec3, paint: Paint) -> EngineResult<usize> {
         let id = self.mesh.add_point(p)?;
         let normal = normal.normalize_or(Vec3::Y);
         self.mesh.set_point_normal(id, normal)?;
@@ -717,7 +735,7 @@ impl Form {
     }
 
     /// A triangle, wound so that it faces the way its points' normals do.
-    fn tri(&mut self, a: usize, b: usize, c: usize) -> EngineResult<()> {
+    pub(crate) fn tri(&mut self, a: usize, b: usize, c: usize) -> EngineResult<()> {
         let face = (self.at[b] - self.at[a]).cross(self.at[c] - self.at[a]);
         if face.length_squared() < 1.0e-14 {
             return Ok(());
@@ -733,7 +751,7 @@ impl Form {
     }
 
     /// Rings of points joined into a skin; each ring has the same count.
-    fn skin(&mut self, rings: &[Vec<usize>]) -> EngineResult<()> {
+    pub(crate) fn skin(&mut self, rings: &[Vec<usize>]) -> EngineResult<()> {
         for pair in rings.windows(2) {
             let n = pair[0].len();
             for j in 0..n {
@@ -747,7 +765,7 @@ impl Form {
 
     /// A round stem along `path`, `radius(t)` thick and painted by
     /// `paint(t)` for t from 0 at its foot to 1, closed at the tip.
-    fn tube(
+    pub(crate) fn tube(
         &mut self,
         path: &[Vec3],
         sides: usize,
@@ -785,7 +803,7 @@ impl Form {
     /// (radius, height) from one end to the other; `wave(k, angle)`
     /// scales the radius of ring `k` at an angle; `paint(k, angle)`.
     #[allow(clippy::too_many_arguments)]
-    fn lathe(
+    pub(crate) fn lathe(
         &mut self,
         base: Vec3,
         up: Vec3,
@@ -817,9 +835,97 @@ impl Form {
         self.skin(&rings)
     }
 
+    /// A flat face with points of its own (so its edges are hard),
+    /// facing away from `inside`.
+    pub(crate) fn face(
+        &mut self,
+        corners: &[Vec3],
+        inside: Vec3,
+        paint: Paint,
+    ) -> EngineResult<()> {
+        let mut normal = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+        let middle = corners.iter().copied().sum::<Vec3>() / corners.len() as f32;
+        if normal.dot(middle - inside) < 0.0 {
+            normal = -normal;
+        }
+        let mut ids = Vec::with_capacity(corners.len());
+        for &c in corners {
+            ids.push(self.point(c, normal, paint)?);
+        }
+        for i in 1..ids.len() - 1 {
+            self.tri(ids[0], ids[i], ids[i + 1])?;
+        }
+        Ok(())
+    }
+
+    /// A block: four corners below (in order around) and the four above.
+    pub(crate) fn block(
+        &mut self,
+        low: [Vec3; 4],
+        high: [Vec3; 4],
+        paint: Paint,
+    ) -> EngineResult<()> {
+        let inside = (low.iter().copied().sum::<Vec3>() + high.iter().copied().sum::<Vec3>()) / 8.0;
+        self.face(&low, inside, paint)?;
+        self.face(&high, inside, paint)?;
+        for i in 0..4 {
+            let j = (i + 1) % 4;
+            self.face(&[low[i], low[j], high[j], high[i]], inside, paint)?;
+        }
+        Ok(())
+    }
+
+    /// A box around `center`, `half` its size along the axes `frame`
+    /// (right, up, out).
+    pub(crate) fn cuboid(
+        &mut self,
+        center: Vec3,
+        frame: [Vec3; 3],
+        half: Vec3,
+        paint: Paint,
+    ) -> EngineResult<()> {
+        let [x, y, z] = [frame[0] * half.x, frame[1] * half.y, frame[2] * half.z];
+        self.block(
+            [
+                center - x - y - z,
+                center + x - y - z,
+                center + x - y + z,
+                center - x - y + z,
+            ],
+            [
+                center - x + y - z,
+                center + x + y - z,
+                center + x + y + z,
+                center - x + y + z,
+            ],
+            paint,
+        )
+    }
+
+    /// A block upright on y: `half0` (x, z) wide at `y0`, `half1` at `y1`.
+    pub(crate) fn frustum(
+        &mut self,
+        middle: Vec3,
+        y0: f32,
+        half0: (f32, f32),
+        y1: f32,
+        half1: (f32, f32),
+        paint: Paint,
+    ) -> EngineResult<()> {
+        let ring = |y: f32, h: (f32, f32)| {
+            [
+                middle + Vec3::new(-h.0, y, -h.1),
+                middle + Vec3::new(h.0, y, -h.1),
+                middle + Vec3::new(h.0, y, h.1),
+                middle + Vec3::new(-h.0, y, h.1),
+            ]
+        };
+        self.block(ring(y0, half0), ring(y1, half1), paint)
+    }
+
     /// A drop: a round body `radius` wide and `length` long from `at`
     /// along `dir`.
-    fn drop(
+    pub(crate) fn drop(
         &mut self,
         at: Vec3,
         dir: Vec3,
@@ -843,7 +949,7 @@ impl Form {
 
 /// A path that rises `height` from `foot`, bowing out along `lean` and
 /// nodding over at the top by `nod`.
-fn arc(foot: Vec3, lean: Vec3, height: f32, nod: f32, steps: usize) -> Vec<Vec3> {
+pub(crate) fn arc(foot: Vec3, lean: Vec3, height: f32, nod: f32, steps: usize) -> Vec<Vec3> {
     (0..=steps)
         .map(|i| {
             let t = i as f32 / steps as f32;
@@ -857,7 +963,7 @@ fn mix(a: Vec3, b: Vec3, t: f32) -> Vec3 {
 }
 
 /// How finely a shape is made: 0 for close up, 2 for far away.
-fn fine(detail: u32, near: usize, mid: usize, far: usize) -> usize {
+pub(crate) fn fine(detail: u32, near: usize, mid: usize, far: usize) -> usize {
     [near, mid, far][detail.min(2) as usize]
 }
 
@@ -1144,6 +1250,9 @@ fn tree(seed: u32, detail: u32) -> EngineResult<Mesh> {
             )
         },
     )?;
+    if detail >= 3 {
+        return Ok(f.mesh);
+    }
     // The plates: one after the other up the trunk, each turned on from
     // the last by the same part of a turn, smaller towards the top.
     let plates = fine(detail, 13, 9, 5);
@@ -1276,6 +1385,16 @@ pub struct Stand {
     pub levels: Vec<(PreparedMesh, f32)>,
     pub places: Vec<Place>,
     pub shadow: bool,
+    pub stuff: Stuff,
+    /// Its plain solid shape, for collision (none: one walks through).
+    pub solid: Option<Mesh>,
+}
+
+/// What a stand is made of (which material draws it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stuff {
+    Flora,
+    Built,
 }
 
 type Job = Box<dyn FnOnce() -> EngineResult<Stand> + Send>;
@@ -1317,6 +1436,13 @@ pub fn stands(plants: &[Plant]) -> Vec<Job> {
                     levels,
                     places,
                     shadow: matches!(kind, Kind::Tree | Kind::Cap | Kind::Fan),
+                    stuff: Stuff::Flora,
+                    // A tree's trunk is solid.
+                    solid: if kind == Kind::Tree {
+                        Some(tree(seed, 3)?)
+                    } else {
+                        None
+                    },
                 })
             }));
         }

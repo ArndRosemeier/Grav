@@ -286,6 +286,23 @@ fn growth_views() -> Vec<View> {
             zoom: false,
         });
     }
+    for &(name, at, up, front) in crate::settle::landmarks() {
+        let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
+        views.push(View {
+            name,
+            eye: at + up * 1.7 + front * 7.5 + side * 3.5,
+            target: at + up * 3.2,
+            up,
+            zoom: false,
+        });
+        views.push(View {
+            name,
+            eye: at + up * 16.0 + front * 34.0 - side * 22.0,
+            target: at + up * 6.0,
+            up,
+            zoom: false,
+        });
+    }
     views
 }
 

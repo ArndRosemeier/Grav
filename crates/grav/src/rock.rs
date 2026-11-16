@@ -54,7 +54,7 @@ const SPRING_BASIN_DEPTH: f32 = 1.7;
 const SPRING_FLOW: f32 = 3200.0;
 
 /// The ring road around the flare's foot, this far from the axis.
-const RING_ROAD: f32 = 137.0;
+pub const RING_ROAD: f32 = 137.0;
 
 fn linear(a: f32, b: f32, x: f32) -> f32 {
     ((x - a) / (b - a)).clamp(0.0, 1.0)
@@ -539,6 +539,16 @@ impl Rock {
         let out = self.flare_relief(theta, rho, z);
         let rho = rho + nr * out;
         Vec3::new(theta.sin() * rho, theta.cos() * rho, z + nz * out)
+    }
+
+    /// The flare's surface at `theta` around, `rho` from the axis.
+    pub fn flare_at(&self, theta: f32, rho: f32) -> Option<Vec3> {
+        let row = (1..self.settled.outline.len()).min_by(|&a, &b| {
+            (self.settled.outline[a].0 - rho)
+                .abs()
+                .total_cmp(&(self.settled.outline[b].0 - rho).abs())
+        })?;
+        ((self.settled.outline[row].0 - rho).abs() < 3.0).then(|| self.flare_point(theta, row))
     }
 
     /// The rocky ground on the flare at its settled point (`rho`, `z`).
@@ -1031,14 +1041,19 @@ pub fn build_all(
     heart_dir: Vec3,
 ) -> EngineResult<(Vec<RockPiece>, Vec<crate::flora::Stand>)> {
     let waters = Arc::new(rock.waters(heart_dir));
-    let growth = Arc::new(crate::flora::grow(&waters, heart_dir, &|p| {
+    // People first: nothing grows where they have built.
+    let sites = crate::settle::plan(rock, &waters);
+    let taken: Vec<(Vec3, f32)> = sites.iter().map(|s| (s.at, s.clear)).collect();
+    let growth = Arc::new(crate::flora::grow(&waters, heart_dir, &taken, &|p| {
         Rock::path_distance(p)
     }));
     let mut jobs = spire_chunks(rock, &waters, &growth);
     jobs.extend(wall_chunks(rock, &waters, &growth));
     jobs.extend(water_jobs(&waters));
     jobs.push(island_job(rock));
-    let stands = on_workers(crate::flora::stands(&growth.plants))?;
+    let mut stand_jobs = crate::flora::stands(&growth.plants);
+    stand_jobs.extend(crate::settle::stands(&sites));
+    let stands = on_workers(stand_jobs)?;
     Ok((on_workers(jobs)?, stands))
 }
 

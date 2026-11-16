@@ -11,6 +11,7 @@
 //! - the island above the tip: light band, 0.4 g;
 //! - the open cavern between: only the heart's push (R3).
 
+use crate::flora::Stuff;
 use crate::look::Look;
 use crate::rock;
 use engine::glam::{EulerRot, Mat3};
@@ -98,11 +99,28 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
     // What grows on it: each shape of each kind once, drawn wherever one
     // stands, lighter with distance.
     for stand in stands {
+        let material = match stand.stuff {
+            Stuff::Flora => look.flora,
+            Stuff::Built => look.built,
+        };
         let set = world.spawn_lod_prepared(stand.levels)?;
         world.set_lod_places(set, &stand.places)?;
         for (i, level) in world.lod_levels(set)?.into_iter().enumerate() {
-            world.set_custom_material(level, look.flora)?;
+            world.set_custom_material(level, material)?;
             world.set_casts_shadow(level, stand.shadow && i < 2)?;
+        }
+        // What is drawn is what collides: the same shape, plain, unseen,
+        // once for each place (only where the hero can come).
+        let Some(solid) = stand.solid else { continue };
+        for place in &stand.places {
+            if place.position.truncate().length() > 420.0 {
+                continue;
+            }
+            let id = world.spawn(solid.clone());
+            world.set_place(id, *place)?;
+            world.set_custom_material(id, look.unseen)?;
+            world.set_casts_shadow(id, false)?;
+            world.add_body(id, Body::fixed().shape(BodyShape::Mesh))?;
         }
     }
     for piece in pieces {

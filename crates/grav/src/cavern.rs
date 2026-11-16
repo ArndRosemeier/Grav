@@ -347,7 +347,7 @@ impl Cavern {
         let (home, calm) = if dir.dot(self.home) > 0.3 {
             (
                 1.0 - smooth(800.0, 2300.0, beside),
-                1.0 - smooth(860.0, 1500.0, beside),
+                1.0 - smooth(860.0, 1060.0, beside),
             )
         } else {
             (0.0, 0.0)

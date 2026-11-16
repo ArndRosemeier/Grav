@@ -15,6 +15,7 @@ mod link;
 mod look;
 mod response;
 mod rock;
+mod settle;
 mod shots;
 mod space;
 mod stones;
