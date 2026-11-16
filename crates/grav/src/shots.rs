@@ -317,7 +317,7 @@ fn growth_views() -> Vec<View> {
         });
     }
     for &(name, at, up, front) in crate::settle::landmarks() {
-        if name.starts_with("goods") {
+        if name.starts_with("goods") || name.starts_with("light") {
             continue;
         }
         let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
@@ -442,6 +442,20 @@ fn growth_views() -> Vec<View> {
         up: rot * Vec3::Y,
         zoom: false,
     });
+    // The lights, close: the lamp and what it lights.
+    for &(name, at, up, front) in crate::settle::landmarks() {
+        if !name.starts_with("light") {
+            continue;
+        }
+        let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
+        views.push(View {
+            name,
+            eye: at + up * 1.6 + front * 3.8 + side * 2.6,
+            target: at + up * 1.8,
+            up,
+            zoom: false,
+        });
+    }
     views
 }
 

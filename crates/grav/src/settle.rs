@@ -276,12 +276,16 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
         (Make::Cask, "goods: casks by a hold", 3),
         (Make::Crate, "goods: crates by a shack", 1),
         (Make::Sack, "goods: sacks by a shack", 1),
+        (Make::Lamp, "light: a lamp by the umbral road", 5),
+        (Make::Brazier, "light: a brazier in the dwarven lane", 2),
+        (Make::Shack, "light: a goblin lantern", 4),
     ] {
         if let Some(s) = sites.iter().filter(|s| s.make == make).nth(nth) {
             marks.push((name, s.at, s.rot * Vec3::Y, s.rot * Vec3::Z));
         }
     }
     let _ = LANDMARKS.set(marks);
+    let _ = LIGHTS.set(sites.iter().filter_map(light_of).collect());
     sites
 }
 
@@ -342,6 +346,47 @@ fn wares(rock: &Rock, sites: &mut Vec<Site>) {
             });
         }
     }
+}
+
+/// Whose light a lamp gives: umbral pale green, dwarven fire, goblin red.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Glow {
+    /// A lamp by the umbral road.
+    Umbral,
+    /// The lantern room under an umbral tower's crown.
+    Crown,
+    Dwarven,
+    Goblin,
+}
+
+static LIGHTS: std::sync::OnceLock<Vec<(Vec3, Glow)>> = std::sync::OnceLock::new();
+
+/// Where the settlements' lights are (known once `plan` has run): the
+/// same spots their lit beads, coals and panes are drawn at.
+pub fn lights() -> &'static [(Vec3, Glow)] {
+    LIGHTS.get().map_or(&[], |l| l.as_slice())
+}
+
+/// The light a thing built gives, if it gives one.
+fn light_of(s: &Site) -> Option<(Vec3, Glow)> {
+    let (local, glow) = match s.make {
+        Make::Lamp => (Vec3::new(0.0, 2.95, 0.8), Glow::Umbral),
+        Make::Brazier => (Vec3::new(0.0, 1.6, 0.0), Glow::Dwarven),
+        Make::Tower => (
+            Vec3::new(0.0, tower_height(s.variant) * 0.76 + 0.7, 0.0),
+            Glow::Crown,
+        ),
+        Make::Shack => {
+            // The lantern on its pole (see `shack`).
+            let k = (s.variant + 1) * 877;
+            let (hw, hd) = (1.5 + 0.6 * hash(k, 1), 1.4 + 0.5 * hash(k, 2));
+            let deck = 1.2 + 0.9 * hash(k, 3);
+            let wall = 1.9 + 0.3 * hash(k, 4);
+            (Vec3::new(-hw - 0.5, deck + wall, hd + 0.5), Glow::Goblin)
+        }
+        _ => return None,
+    };
+    Some((s.at + s.rot * local, glow))
 }
 
 /// A place worth a look: its name, where, its up, its front.
