@@ -31,6 +31,9 @@ pub struct Tour {
     views: Vec<View>,
     frame: u32,
     first: usize,
+    /// Frames each view is held (`GRAV_TOUR_HOLD`, for views in which
+    /// something happens).
+    hold: u32,
     /// The views of what grows have been added (they are known only
     /// once it has grown).
     grown: bool,
@@ -47,16 +50,26 @@ impl Tour {
             grown: false,
             frame: 0,
             first: first.saturating_sub(1),
+            hold: std::env::var("GRAV_TOUR_HOLD")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(HOLD)
+                .max(1),
             lens: None,
         })
     }
 
     /// Set this frame's camera.
     /// An open stone the view on show wants in the world: where it is.
-    pub fn stone(&self) -> Option<Vec3> {
-        let index = (self.first + (self.frame / HOLD) as usize) % self.views.len().max(1);
+    /// (Where, strength in g, radius.)
+    pub fn stone(&self) -> Option<(Vec3, f32, f32)> {
+        let index = (self.first + (self.frame / self.hold) as usize) % self.views.len().max(1);
         let view = self.views.get(index)?;
-        (view.name == GRASS_STONE).then(|| grass_stone().0)
+        match view.name {
+            GRASS_STONE => Some((grass_stone().0, 2.5, 12.0)),
+            TOWN_STONE => town_stone().map(|(at, ..)| (at, 3.0, 22.0)),
+            _ => None,
+        }
     }
 
     pub fn frame(&mut self, world: &mut World) {
@@ -64,7 +77,7 @@ impl Tour {
             self.grown = true;
             self.views.extend(growth_views());
         }
-        let index = (self.first + (self.frame / HOLD) as usize) % self.views.len();
+        let index = (self.first + (self.frame / self.hold) as usize) % self.views.len();
         let v = &self.views[index];
         let camera = world.camera();
         let lens = *self
@@ -346,6 +359,19 @@ fn growth_views() -> Vec<View> {
         up,
         zoom: false,
     });
+    // A strong stone open by a tower: the town coming apart.
+    if let Some((stone, at, up, front)) = town_stone() {
+        let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
+        for (back, out, high) in [(27.0, 13.0, 6.0), (30.0, -16.0, 14.0)] {
+            views.push(View {
+                name: TOWN_STONE,
+                eye: at + front * back + side * out + up * high,
+                target: stone,
+                up,
+                zoom: false,
+            });
+        }
+    }
     views
 }
 
@@ -378,6 +404,15 @@ pub fn measure_views() -> Vec<Spot> {
             up: v.up,
         })
         .collect()
+}
+
+const TOWN_STONE: &str = "town: a strong stone open by a tower";
+
+/// Where the tour's open stone hangs by the first tower, with the
+/// tower's foot, up and front.
+fn town_stone() -> Option<(Vec3, Vec3, Vec3, Vec3)> {
+    let &(_, at, up, front) = crate::settle::landmarks().first()?;
+    Some((at + up * 7.0 + front * 4.5, at, up, front))
 }
 
 const GRASS_STONE: &str = "grass: around an open stone";

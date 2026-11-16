@@ -754,8 +754,13 @@ pub fn landmarks() -> &'static [Mark] {
 pub(crate) struct Form {
     pub(crate) mesh: Mesh,
     ids: Vec<PointId>,
-    at: Vec<Vec3>,
-    normal: Vec<Vec3>,
+    pub(crate) at: Vec<Vec3>,
+    pub(crate) normal: Vec<Vec3>,
+    /// Each point's colour and glow, and what it is made of.
+    pub(crate) paint: Vec<Paint>,
+    pub(crate) kind: Vec<f32>,
+    /// The triangles, wound to face outwards.
+    pub(crate) tris: Vec<[usize; 3]>,
     /// What the next points are made of (the material reads it): 0 a
     /// waxy stem, 1 bark, 2 a skin of cells (caps, plates).
     pub(crate) surface: f32,
@@ -771,6 +776,9 @@ impl Form {
             ids: Vec::new(),
             at: Vec::new(),
             normal: Vec::new(),
+            paint: Vec::new(),
+            kind: Vec::new(),
+            tris: Vec::new(),
             surface: 0.0,
         }
     }
@@ -786,6 +794,8 @@ impl Form {
         self.ids.push(id);
         self.at.push(p);
         self.normal.push(normal);
+        self.paint.push((c, paint.1));
+        self.kind.push(self.surface);
         Ok(self.ids.len() - 1)
     }
 
@@ -796,13 +806,10 @@ impl Form {
             return Ok(());
         }
         let out = self.normal[a] + self.normal[b] + self.normal[c];
-        if face.dot(out) >= 0.0 {
-            self.mesh
-                .add_triangle(self.ids[a], self.ids[b], self.ids[c])
-        } else {
-            self.mesh
-                .add_triangle(self.ids[a], self.ids[c], self.ids[b])
-        }
+        let (b, c) = if face.dot(out) >= 0.0 { (b, c) } else { (c, b) };
+        self.tris.push([a, b, c]);
+        self.mesh
+            .add_triangle(self.ids[a], self.ids[b], self.ids[c])
     }
 
     /// Rings of points joined into a skin; each ring has the same count.
@@ -1453,6 +1460,8 @@ pub struct Stand {
     pub stuff: Stuff,
     /// Its plain solid shape, for collision (none: one walks through).
     pub solid: Option<Mesh>,
+    /// The pieces it breaks into (buildings; see pieces.rs).
+    pub pieces: Vec<crate::pieces::Shard>,
 }
 
 /// What a stand is made of (which material draws it).
@@ -1508,6 +1517,7 @@ pub fn stands(plants: &[Plant]) -> Vec<Job> {
                     } else {
                         None
                     },
+                    pieces: Vec::new(),
                 })
             }));
         }

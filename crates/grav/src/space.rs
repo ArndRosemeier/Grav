@@ -100,6 +100,8 @@ pub struct Scenery {
     pub plants: Vec<(LodId, Vec<Place>)>,
     pub built: Vec<(LodId, Vec<Place>)>,
     pub cavern: Vec<(LodId, Vec<Place>)>,
+    /// The buildings by kind, for the town that comes apart (town.rs).
+    pub town: Vec<crate::town::Kind>,
 }
 
 impl Scenery {
@@ -125,6 +127,7 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
         plants: Vec::new(),
         built: Vec::new(),
         cavern: Vec::new(),
+        town: Vec::new(),
     };
     // What grows on it: each shape of each kind once, drawn wherever one
     // stands, lighter with distance.
@@ -146,16 +149,27 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
             Stuff::Built => &mut scenery.built,
         };
         part.push((set, stand.places.clone()));
-        let Some(solid) = stand.solid else { continue };
-        for place in &stand.places {
-            if place.position.truncate().length() > 420.0 {
-                continue;
+        let mut solids = vec![None; stand.places.len()];
+        if let Some(solid) = stand.solid {
+            for (i, place) in stand.places.iter().enumerate() {
+                if place.position.truncate().length() > 420.0 {
+                    continue;
+                }
+                let id = world.spawn(solid.clone());
+                world.set_place(id, *place)?;
+                world.set_custom_material(id, look.unseen)?;
+                world.set_casts_shadow(id, false)?;
+                world.add_body(id, Body::fixed().shape(BodyShape::Mesh))?;
+                solids[i] = Some(id);
             }
-            let id = world.spawn(solid.clone());
-            world.set_place(id, *place)?;
-            world.set_custom_material(id, look.unseen)?;
-            world.set_casts_shadow(id, false)?;
-            world.add_body(id, Body::fixed().shape(BodyShape::Mesh))?;
+        }
+        if !stand.pieces.is_empty() {
+            scenery.town.push(crate::town::Kind {
+                set,
+                places: stand.places,
+                solids,
+                shards: stand.pieces,
+            });
         }
     }
     for piece in pieces {
@@ -220,7 +234,6 @@ pub struct PieceRef {
     pub entity: EntityId,
     pub structure: usize,
     pub piece: PieceId,
-    pub half: Vec3,
 }
 
 /// What stands built in the space, for the world's response to stones:

@@ -16,10 +16,12 @@
 //! a plain solid for collision, and drawn wherever one stands.
 
 use crate::flora::{arc, fine, hash, smooth, Form, Stand, Stuff};
+use crate::pieces::{shatter, Cells, Hold, Shard};
 use crate::rock::{self, Rock, Waters};
 use crate::space;
 use engine::glam::Mat3;
 use engine::prelude::*;
+use grav_core::BondClass;
 use std::f32::consts::{PI, TAU};
 
 /// What can stand in a settlement.
@@ -325,7 +327,7 @@ fn pointed_window(
 /// swelling again under its crown, in a lattice of metal that winds
 /// around it both ways; lit windows that climb around it, a balcony, a
 /// lantern room and a needle.
-fn tower(variant: u32, detail: u32) -> EngineResult<Mesh> {
+fn tower(variant: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let k = (variant + 1) * 733;
     let tall = tower_height(variant);
@@ -380,7 +382,7 @@ fn tower(variant: u32, detail: u32) -> EngineResult<Mesh> {
         &|_, _| (foam * 0.9, 0.0),
     )?;
     if solid(detail) {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     // The needle.
     f.surface = LATTICE;
@@ -462,7 +464,7 @@ fn tower(variant: u32, detail: u32) -> EngineResult<Mesh> {
         (detail < 2).then_some((0.07, metal)),
     )?;
     if detail == 2 {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     // The lattice: bars winding up it both ways, standing off the rock.
     let bars = fine(detail, 7, 5, 0);
@@ -533,12 +535,12 @@ fn tower(variant: u32, detail: u32) -> EngineResult<Mesh> {
             light,
         )?;
     }
-    Ok(f.mesh)
+    Ok(f)
 }
 
 /// A bridge between two towers: a thin deck that arches up, light rails,
 /// and a bowed chord under it with struts.
-fn bridge(variant: u32, detail: u32) -> EngineResult<Mesh> {
+fn bridge(variant: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let length = bridge_length(variant) + 0.9;
     let n = fine(detail, 16, 8, 4);
@@ -566,7 +568,7 @@ fn bridge(variant: u32, detail: u32) -> EngineResult<Mesh> {
         )?;
     }
     if solid(detail) {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     f.surface = LATTICE;
     for x in [-0.57_f32, 0.57] {
@@ -595,13 +597,13 @@ fn bridge(variant: u32, detail: u32) -> EngineResult<Mesh> {
             }
         }
     }
-    Ok(f.mesh)
+    Ok(f)
 }
 
 /// A dwarven hold: a squat block of heavy stone, its walls leaning in,
 /// buttressed at the corners, on a plinth, under a low vault bound in
 /// iron; a round-arched porch, small deep windows, a thick stack.
-fn hold(variant: u32, detail: u32) -> EngineResult<Mesh> {
+fn hold(variant: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let k = (variant + 1) * 613;
     let (w, d) = hold_size(variant);
@@ -661,7 +663,7 @@ fn hold(variant: u32, detail: u32) -> EngineResult<Mesh> {
         f.face(&gable, Vec3::new(0.0, base, 0.0), (stone * 0.95, 0.0))?;
     }
     if solid(detail) {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     // Buttresses at the corners, and in the middle of a long wall.
     let mut feet = vec![(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)];
@@ -870,13 +872,13 @@ fn hold(variant: u32, detail: u32) -> EngineResult<Mesh> {
         stack,
         (Vec3::new(1.0, 0.35, 0.12), 1.2),
     )?;
-    Ok(f.mesh)
+    Ok(f)
 }
 
 /// A goblin shack: a deck on crooked poles, walls and roof patched from
 /// plates, planks and cloth, braced and lashed, with a ladder, a crooked
 /// pipe and a lantern.
-fn shack(variant: u32, detail: u32) -> EngineResult<Mesh> {
+fn shack(variant: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let k = (variant + 1) * 877;
     let (hw, hd) = (1.5 + 0.6 * hash(k, 1), 1.4 + 0.5 * hash(k, 2));
@@ -1024,7 +1026,7 @@ fn shack(variant: u32, detail: u32) -> EngineResult<Mesh> {
         }
     }
     if solid(detail) || detail == 2 {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     // Braces from the poles' feet up under the deck.
     f.surface = WOOD;
@@ -1140,12 +1142,12 @@ fn shack(variant: u32, detail: u32) -> EngineResult<Mesh> {
             )?;
         }
     }
-    Ok(f.mesh)
+    Ok(f)
 }
 
 /// An umbral street lamp: a thin post that curls over, a lit drop
 /// hanging from it.
-fn lamp(_: u32, detail: u32) -> EngineResult<Mesh> {
+fn lamp(_: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let metal = Vec3::new(0.1, 0.19, 0.16);
     f.surface = LATTICE;
@@ -1166,7 +1168,7 @@ fn lamp(_: u32, detail: u32) -> EngineResult<Mesh> {
         (metal, 0.0)
     })?;
     if solid(detail) {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     let tip = path[n];
     f.surface = PANE;
@@ -1178,12 +1180,12 @@ fn lamp(_: u32, detail: u32) -> EngineResult<Mesh> {
         fine(detail, 14, 8, 4),
         (Vec3::new(0.55, 1.0, 0.8), 2.0),
     )?;
-    Ok(f.mesh)
+    Ok(f)
 }
 
 /// A dwarven brazier: a short thick pillar of stone with an iron bowl of
 /// coals.
-fn brazier(_: u32, detail: u32) -> EngineResult<Mesh> {
+fn brazier(_: u32, detail: u32) -> EngineResult<Form> {
     let mut f = Form::new();
     let stone = Vec3::new(0.28, 0.26, 0.25);
     f.surface = BLOCKS;
@@ -1204,7 +1206,7 @@ fn brazier(_: u32, detail: u32) -> EngineResult<Mesh> {
         (stone * 0.85, 0.0),
     )?;
     if solid(detail) {
-        return Ok(f.mesh);
+        return Ok(f);
     }
     f.surface = IRON;
     f.lathe(
@@ -1235,12 +1237,41 @@ fn brazier(_: u32, detail: u32) -> EngineResult<Mesh> {
             (Vec3::new(1.0, 0.33, 0.1) * ember, 1.6 * ember)
         },
     )?;
-    Ok(f.mesh)
+    Ok(f)
 }
 
 type Job = Box<dyn FnOnce() -> EngineResult<Stand> + Send>;
 /// Makes a thing's shape from which shape of it and a level of detail.
-type Shaper = fn(u32, u32) -> EngineResult<Mesh>;
+type Shaper = fn(u32, u32) -> EngineResult<Form>;
+
+/// A building's shape cut into the pieces it breaks into (W1): what each
+/// kind of surface is bonded like, and how thick its masonry is.
+fn shards(make: Make, form: &Form) -> EngineResult<Vec<Shard>> {
+    use BondClass::{Dwarven, Light, Masonry, Timber};
+    let is = |kind: f32, what: f32| (kind - what).abs() < 0.5;
+    let (cells, hold): (Cells, Hold) = match make {
+        Make::Tower => (Cells::Round(2.4, 6), Hold::Foot),
+        Make::Bridge => (Cells::Square(Vec3::new(50.0, 50.0, 2.5)), Hold::Ends),
+        Make::Hold => (Cells::Square(Vec3::new(2.2, 1.7, 2.2)), Hold::Foot),
+        Make::Shack => (Cells::Square(Vec3::new(1.7, 1.5, 1.7)), Hold::Foot),
+        Make::Lamp | Make::Brazier => (Cells::One, Hold::Foot),
+    };
+    shatter(form, cells, hold, &|kind| match make {
+        // Umbral work: light foamed walls in a lattice of metal.
+        Make::Tower if is(kind, FOAM) => (Timber, Some(0.3)),
+        Make::Tower if is(kind, LATTICE) => (Masonry, None),
+        Make::Tower | Make::Bridge if is(kind, PANE) => (Light, None),
+        Make::Tower | Make::Bridge => (Timber, None),
+        // Dwarven heavy masonry and iron.
+        Make::Hold if is(kind, BLOCKS) => (Dwarven, Some(0.45)),
+        Make::Hold if is(kind, IRON) => (Dwarven, None),
+        Make::Hold if is(kind, PANE) => (Light, None),
+        Make::Hold => (Timber, None),
+        // Goblin patchwork: poles hold a little, the rest hardly.
+        Make::Shack if is(kind, WOOD) => (Timber, None),
+        Make::Shack | Make::Lamp | Make::Brazier => (Light, None),
+    })
+}
 
 /// The buildings as jobs for worker threads: one per thing and shape.
 pub fn stands(sites: &[Site]) -> Vec<Job> {
@@ -1266,14 +1297,15 @@ pub fn stands(sites: &[Site]) -> Vec<Job> {
                 };
                 let mut levels = Vec::new();
                 for (detail, to) in reach.into_iter().enumerate() {
-                    levels.push((shape(variant, detail as u32)?.prepare(), to));
+                    levels.push((shape(variant, detail as u32)?.mesh.prepare(), to));
                 }
                 Ok(Stand {
                     levels,
                     places,
                     shadow: true,
                     stuff: Stuff::Built,
-                    solid: Some(shape(variant, 3)?),
+                    solid: Some(shape(variant, 3)?.mesh),
+                    pieces: shards(make, &shape(variant, 0)?)?,
                 })
             }));
         }
@@ -1299,14 +1331,57 @@ mod tests {
             for variant in 0..variants(make) {
                 let mut last = usize::MAX;
                 for detail in 0..3 {
-                    let n = shape(variant, detail).unwrap().face_count();
+                    let n = shape(variant, detail).unwrap().mesh.face_count();
                     assert!(
                         n > 0 && n < last,
                         "{make:?} {variant} level {detail}: {n} after {last}"
                     );
                     last = n;
                 }
-                assert!(shape(variant, 3).unwrap().face_count() > 0);
+                assert!(shape(variant, 3).unwrap().mesh.face_count() > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn every_building_comes_apart_into_pieces_that_hang_together() {
+        for make in MAKES {
+            let shape: Shaper = match make {
+                Make::Tower => tower,
+                Make::Bridge => bridge,
+                Make::Hold => hold,
+                Make::Shack => shack,
+                Make::Lamp => lamp,
+                Make::Brazier => brazier,
+            };
+            for variant in 0..variants(make) {
+                let form = shape(variant, 0).unwrap();
+                let pieces = shards(make, &form).unwrap();
+                let faces: usize = pieces.iter().map(|p| p.mesh.face_count()).sum();
+                eprintln!(
+                    "{make:?} {variant}: {} pieces, {faces} faces from {}",
+                    pieces.len(),
+                    form.tris.len()
+                );
+                assert!(!pieces.is_empty() && pieces.len() < 700);
+                assert!(faces >= form.tris.len());
+                // Every piece is held, through its neighbours, by an anchor.
+                let mut held: Vec<bool> = pieces.iter().map(|p| p.anchored).collect();
+                let mut queue: Vec<usize> = (0..pieces.len()).filter(|&i| held[i]).collect();
+                assert!(!queue.is_empty(), "{make:?} {variant} has no anchor");
+                while let Some(i) = queue.pop() {
+                    for &j in &pieces[i].neighbours {
+                        if !held[j] {
+                            held[j] = true;
+                            queue.push(j);
+                        }
+                    }
+                }
+                let loose = held.iter().filter(|h| !**h).count();
+                assert_eq!(
+                    loose, 0,
+                    "{make:?} {variant}: {loose} pieces hang in the air"
+                );
             }
         }
     }

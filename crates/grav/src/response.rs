@@ -51,6 +51,18 @@ impl Response {
         }
     }
 
+    /// A structure that has come into the world later (a building woken
+    /// by a field): its pieces stand where their entities are now.
+    pub fn add(&mut self, world: &World, structure: grav_core::Structure, pieces: Vec<PieceRef>) {
+        for p in &pieces {
+            let m = world.world_transform(p.entity).unwrap_or_default();
+            let (_, r, t) = m.to_scale_rotation_translation();
+            self.rest.push((t, r));
+        }
+        self.built.structures.push(structure);
+        self.built.pieces.extend(pieces);
+    }
+
     fn piece_ref(&self, k: usize) -> PieceRef {
         self.built.pieces[k]
     }
@@ -102,13 +114,12 @@ impl Response {
             let (at, rot) = self.rest[k];
             world.set_place(p.entity, place(at, rot).with_tint(rgb(235, 225, 215)))?;
             world.remove_body(p.entity);
-            world.add_body(
-                p.entity,
-                Body::dynamic()
-                    .density(density(class))
-                    .shape(BodyShape::Box(p.half))
-                    .ccd(true),
-            )?;
+            // Solid by its own shape (what is drawn is what collides); a
+            // sliver too small for that by its box.
+            let body = Body::dynamic().density(density(class)).ccd(true);
+            if world.add_body(p.entity, body.clone()).is_err() {
+                world.add_body(p.entity, body.shape(BodyShape::BoundingBox))?;
+            }
             self.debris.push((p.entity, 0.0));
             self.broken_total += 1;
         }

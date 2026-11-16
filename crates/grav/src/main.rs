@@ -15,12 +15,14 @@ mod hero;
 mod link;
 mod look;
 mod meter;
+mod pieces;
 mod response;
 mod rock;
 mod settle;
 mod shots;
 mod space;
 mod stones;
+mod town;
 mod visuals;
 mod water;
 mod wet;
@@ -40,6 +42,7 @@ struct Game {
     grass: grass::Grass,
     scenery: space::Scenery,
     meter: meter::Meter,
+    town: town::Town,
     hero: Hero,
     inv: Inventory,
     response: Response,
@@ -81,7 +84,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ground: PhysicsGround::None,
         ..PhysicsSettings::default()
     })?;
-    let scenery = space::build_rock(world, &look)?;
+    let mut scenery = space::build_rock(world, &look)?;
+    let town = town::Town::new(std::mem::take(&mut scenery.town), look.built);
     let base = space::base_field();
     let grass = grass::Grass::new(world, look.flora, &scenery.blades, &base)?;
     // Nothing is built here yet (the stand-in town was torn down).
@@ -107,6 +111,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         grass,
         scenery,
         meter,
+        town,
         hero,
         inv,
         response,
@@ -238,25 +243,21 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.hero.cam_up
     };
     let hand = g.hero.hand(world);
-    let field = field_with(&g.base, g.inv.sources(hero_id, hand, up));
+    let mut field = field_with(&g.base, g.inv.sources(hero_id, hand, up));
+    if let Some((at, g_max, radius)) = g.tour.as_ref().and_then(|t| t.stone()) {
+        // The screenshot tour's own open stone, for views that want one.
+        field.sources.push(grav_core::Source::new(
+            9000,
+            Charge::Attracting,
+            at,
+            g_max,
+            radius,
+        ));
+    }
     link::install(world, &field, HashMap::new());
     // The grass shows the pull: it turns to the field around open stones.
     let eye = world.camera().eye();
-    match g.tour.as_ref().and_then(|t| t.stone()) {
-        Some(at) => {
-            // The screenshot tour's own stone, for the grass alone.
-            let mut shown = field.clone();
-            shown.sources.push(grav_core::Source::new(
-                9000,
-                Charge::Attracting,
-                at,
-                2.5,
-                12.0,
-            ));
-            g.grass.update(world, &shown, eye)?;
-        }
-        None => g.grass.update(world, &field, eye)?,
-    }
+    g.grass.update(world, &field, eye)?;
     world.report("grass clumps", g.grass.count());
 
     // A15: a held stone is pushed by opposite charges, and drags the hero.
@@ -284,6 +285,9 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     }
 
     g.hero.update(world, keys, &g.tuning.movement, dt)?;
+    // Buildings a stone's field reaches become their bonded pieces.
+    g.town
+        .update(world, &mut g.response, &field, &g.base, &g.tuning)?;
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet)?;
 
@@ -362,6 +366,9 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("hero_pull_g", g.hero.pull_g);
     world.report("coating", g.inv.coating.units);
     world.report("pieces_broken", g.response.broken_total);
+    world.report("buildings_woken", g.town.woken);
+    world.report("buildings", g.town.count().0);
+    world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));
     Ok(())
 }
