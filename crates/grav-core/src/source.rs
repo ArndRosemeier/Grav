@@ -2,7 +2,7 @@
 
 use crate::profile::{Profile, Selectivity, TimeDial};
 use crate::G;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// Whether a lodestone attracts or repels (S6: fixed by origin).
@@ -59,6 +59,46 @@ pub struct Source {
     /// The body holding this stone in its hand, which the stone does not
     /// act on (P8). `None` when it is set, loose or thrown.
     pub holder: Option<u64>,
+    /// Which sides the field spills out of (S14): bit `i` for
+    /// [`crate::stone::Face::ALL`]`[i]`, all six for a round field. A side
+    /// covers the space where its face's axis is the largest part of the
+    /// offset, so six sides together make the round field.
+    #[serde(default = "all_faces")]
+    pub faces: u8,
+    /// The box's orientation: its faces' axes (local +z front, +y up, +x
+    /// left) in the world.
+    #[serde(default)]
+    pub frame: Quat,
+}
+
+/// Every side open.
+pub const ALL_FACES: u8 = 0b11_1111;
+
+fn all_faces() -> u8 {
+    ALL_FACES
+}
+
+/// The side of a box (index into [`crate::stone::Face::ALL`]) that a local
+/// offset falls on.
+pub fn face_of(local: Vec3) -> usize {
+    let a = local.abs();
+    if a.z >= a.x && a.z >= a.y {
+        if local.z >= 0.0 {
+            0
+        } else {
+            1
+        }
+    } else if a.x >= a.y {
+        if local.x >= 0.0 {
+            2
+        } else {
+            3
+        }
+    } else if local.y >= 0.0 {
+        4
+    } else {
+        5
+    }
 }
 
 impl Source {
@@ -77,6 +117,8 @@ impl Source {
             selectivity: Selectivity::All,
             open_seconds: 0.0,
             holder: None,
+            faces: ALL_FACES,
+            frame: Quat::IDENTITY,
         }
     }
 
@@ -105,6 +147,12 @@ impl Source {
     pub fn acceleration(&self, p: Vec3, mass: f32) -> Vec3 {
         if !self.is_active() || !self.selectivity.accepts(mass) {
             return Vec3::ZERO;
+        }
+        if self.faces != ALL_FACES {
+            let local = self.frame.inverse() * (p - self.position);
+            if self.faces & (1 << face_of(local)) == 0 {
+                return Vec3::ZERO;
+            }
         }
         self.profile.pull(p - self.position, self.axis, self.radius) * self.magnitude()
     }
@@ -141,6 +189,19 @@ mod tests {
         let a = s.acceleration(Vec3::new(0.0, 5.0, 0.0), 1.0);
         assert!(a.y > 0.0);
         assert!((a.y - 0.5 * G).abs() < 1e-4);
+    }
+
+    #[test]
+    fn one_open_face_pulls_only_on_its_side() {
+        let mut s = Source::new(4, Charge::Attracting, Vec3::ZERO, 1.0, 10.0);
+        s.faces = 1; // the front: local +z
+        s.frame = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2); // front faces +x
+        assert!(s.acceleration(Vec3::new(4.0, 1.0, 0.0), 1.0).x < -0.1);
+        assert_eq!(s.acceleration(Vec3::new(-4.0, 0.0, 0.0), 1.0), Vec3::ZERO);
+        assert_eq!(s.acceleration(Vec3::new(1.0, 4.0, 0.0), 1.0), Vec3::ZERO);
+        // All six sides make the round field again.
+        s.faces = ALL_FACES;
+        assert!(s.acceleration(Vec3::new(1.0, 4.0, 0.0), 1.0).y < -0.1);
     }
 
     #[test]

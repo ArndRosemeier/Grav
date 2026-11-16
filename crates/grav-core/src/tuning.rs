@@ -6,7 +6,7 @@ use crate::bonds::BondClass;
 use crate::hero::Movement;
 use crate::profile::Profile;
 use crate::source::Charge;
-use crate::stone::StoneSpec;
+use crate::stone::{Flight, StoneSpec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -19,12 +19,10 @@ pub struct Tuning {
     pub bond_masonry: f32,
     pub bond_dwarven: f32,
     pub bond_guild: f32,
-    /// Starting coating units.
-    pub start_coating: f32,
-    /// The hero's starting stones.
+    /// The hero's starting stones, each in its box.
     pub start_stones: Vec<StoneSpec>,
-    /// Throw range in metres.
-    pub throw_range: f32,
+    /// How a thrown box flies (S17).
+    pub flight: Flight,
     /// Hand stones' limits (sandbox palette): magnitude and radius.
     pub hand_max_g: f32,
     pub hand_radius: (f32, f32),
@@ -43,7 +41,6 @@ impl Default for Tuning {
             time: Default::default(),
             selectivity: Default::default(),
             slots: 1,
-            spring_sheath: false,
         };
         let shard = StoneSpec {
             name: "Repelling shard".into(),
@@ -54,7 +51,6 @@ impl Default for Tuning {
             time: Default::default(),
             selectivity: Default::default(),
             slots: 0,
-            spring_sheath: false,
         };
         Self {
             movement: Movement::default(),
@@ -63,9 +59,8 @@ impl Default for Tuning {
             bond_masonry: 1.5,
             bond_dwarven: 3.0,
             bond_guild: 5.0,
-            start_coating: 20.0,
             start_stones: vec![common.clone(), common, shard],
-            throw_range: 30.0,
+            flight: Flight::default(),
             hand_max_g: 3.0,
             hand_radius: (5.0, 40.0),
             loot_max_g: 6.0,
@@ -102,7 +97,6 @@ mod tests {
     #[test]
     fn the_start_kit_matches_the_design() {
         let t = Tuning::default();
-        assert_eq!(t.start_coating, 20.0);
         assert_eq!(t.start_stones.len(), 3);
         assert_eq!(t.start_stones[2].charge, Charge::Repelling);
         assert_eq!(t.bond_g(BondClass::Dwarven), 3.0);
@@ -110,8 +104,8 @@ mod tests {
 
     #[test]
     fn json_overrides_only_what_it_names() {
-        let t = Tuning::from_json(r#"{ "start_coating": 50.0 }"#).unwrap();
-        assert_eq!(t.start_coating, 50.0);
+        let t = Tuning::from_json(r#"{ "bond_light": 0.5 }"#).unwrap();
+        assert_eq!(t.bond_light, 0.5);
         assert_eq!(t.bond_masonry, 1.5);
         let back = Tuning::from_json(&t.to_json()).unwrap();
         assert_eq!(back, t);

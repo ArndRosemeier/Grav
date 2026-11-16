@@ -1,11 +1,11 @@
 //! Grav sandbox: one spire, the hero, stones and a world that reacts.
 //!
-//! Keys: WASD walk, Q/E turn (or look around with the mouse, right button held),
-//! Space jump (push off while drifting), 1-9 pick a stone, F hold to open,
-//! C hold to close (costs coating), G take in hand / pack, left click throws the
-//! stone in hand to the target zone under the mouse, V set on the surface in reach, X recover, Z recall,
-//! R hold for stone sense, P sandbox palette.
+//! Keys: WASD walk, Shift sprint, Q/E turn (or look around with the mouse,
+//! right button held), Space jump (push off while drifting), 1-9 take a box
+//! in hand (again: put it away), hold the left mouse button to wind up and
+//! release to throw, Tab the box bench, R hold for stone sense.
 
+mod boxes;
 mod cavern;
 mod dwarf;
 mod flora;
@@ -21,19 +21,17 @@ mod rock;
 mod settle;
 mod shots;
 mod space;
-mod stones;
 mod town;
 mod visuals;
 mod water;
 mod wet;
 
-use engine::egui;
+use boxes::Boxes;
 use engine::prelude::*;
-use grav_core::{BodyQuery, Charge, LodestoneBody, Placement, Profile, Tuning, G};
+use grav_core::{BodyQuery, BoxState, Charge, Face, Program, Tuning};
 use hero::{Hero, HeroInput};
 use response::Response;
 use std::collections::HashMap;
-use stones::{field_with, Inventory};
 use visuals::Visuals;
 
 struct Game {
@@ -44,22 +42,20 @@ struct Game {
     meter: meter::Meter,
     town: town::Town,
     hero: Hero,
-    inv: Inventory,
+    boxes: Boxes,
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
     tour: Option<shots::Tour>,
-    palette: bool,
     demo: Option<Demo>,
 }
 
-/// A scripted run for verify (no keys there): set a stone by a house, open
-/// it, watch tiles and timber come down, close it and pay for it.
+/// A scripted run for verify (no keys there): throw a box, let its clocks
+/// open it over the spring and drop it, drag the hero with another.
 #[derive(Default)]
 struct Demo {
     step: u32,
-    coating_before: f32,
-    broken_open: usize,
+    throw_rest: Vec3,
     pool_start: Vec3,
     drag_start: Vec3,
     drag_stone: Vec3,
@@ -95,7 +91,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     if let Some((body, height)) = dwarf::spawn(world) {
         hero.set_animated_body(world, body, height);
     }
-    let inv = Inventory::new(world, &tuning)?;
+    let boxes = Boxes::new(world, &tuning)?;
     let response = Response::new(world, built);
     let visuals = Visuals::new(world, at)?;
     let waters = water::build(world)?;
@@ -113,12 +109,11 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         meter,
         town,
         hero,
-        inv,
+        boxes,
         response,
         visuals,
         waters,
         tour,
-        palette: false,
         demo,
     })
 }
@@ -160,6 +155,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         keys.turn -= yaw;
         keys.pitch = pitch;
     }
+    // --- Boxes ---
     for (k, key) in [
         Key::Digit1,
         Key::Digit2,
@@ -174,66 +170,65 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     .into_iter()
     .enumerate()
     {
-        if input.pressed(key) && k < g.inv.stones.len() {
-            g.inv.selected = k;
+        if input.pressed(key) {
+            g.boxes.pick(k);
         }
     }
-    let step = Inventory::sheath_step(dt);
-    if input.down(Key::F) {
-        g.inv.open(hero_id, step);
+    if input.pressed(Key::Tab) {
+        g.boxes.bench = !g.boxes.bench;
     }
-    if input.down(Key::C) {
-        g.inv.close(step, feet, world);
-    }
-    if input.pressed(Key::G) {
-        g.inv.hold_or_stow(hero_id);
-    }
-    // The target: the surface under the mouse, within throwing range of
-    // the hand. It is shown whenever a stone is out, and a left click
-    // throws the stone there.
+    let up_now = g.hero.state(world).up;
+    let up_now = if up_now.length_squared() > 0.5 {
+        up_now
+    } else {
+        g.hero.cam_up
+    };
     let hand_now = g.hero.hand(world);
-    let holding = matches!(g.inv.current().placement, Placement::Held { .. });
+    // Aim at what is under the mouse (or far along its ray); while the left
+    // button is held the throw winds up, and on release the box flies.
     let (eye, mut ray) = world.cursor_ray(frame);
     if g.demo.is_some() {
-        // No mouse in a verify run: point at the ground ahead of the hero.
-        ray = (feet + g.hero.heading * 8.0 - eye).normalize_or(ray);
+        // No mouse in a verify run: aim ahead of the hero, a little up.
+        ray = (feet + g.hero.heading * 12.0 + up_now * 2.5 - eye).normalize_or(ray);
     }
-    let under_mouse = world.cast_ray_ignoring(eye, ray, g.tuning.throw_range + 12.0, hero_id);
-    let target = under_mouse.filter(|hit| hit.point.distance(hand_now) <= g.tuning.throw_range);
-    if input.pressed(Key::V) {
-        g.inv.set(target);
-    }
-    if input.pressed(Key::X) {
-        g.inv.recover(hero_id, feet, world);
-    }
-    if input.pressed(Key::Z) {
-        g.inv.recall();
-    }
-    let aiming = holding;
-    if aiming && input.mouse_clicked(MouseButton::Left) && !frame.ui.ctx().wants_pointer_input() {
-        if target.is_none() && under_mouse.is_some() {
-            g.inv.say("Out of throwing range");
-        } else {
-            g.inv.throw(hand_now, target);
+    let aim_point = world
+        .cast_ray_ignoring(eye, ray, 120.0, hero_id)
+        .map_or(eye + ray * 120.0, |h| h.point);
+    let aim_dir = (aim_point - hand_now).normalize_or(g.hero.heading);
+    let over_ui = frame.ui.ctx().wants_pointer_input() || g.boxes.bench;
+    let ready_to_throw = g.boxes.out && !g.boxes.bench;
+    if ready_to_throw {
+        if input.mouse_clicked(MouseButton::Left) && !over_ui {
+            g.boxes.windup = Some(0.0);
         }
+        if let Some(w) = g.boxes.windup.as_mut() {
+            *w += dt;
+        }
+    } else {
+        g.boxes.windup = None;
     }
-    if input.pressed(Key::P) {
-        g.palette = !g.palette;
+    let speed = g.boxes.flight().speed_after(g.boxes.windup.unwrap_or(0.0));
+    let aim = ready_to_throw.then(|| {
+        g.boxes.aim(
+            world,
+            hero_id,
+            hand_now,
+            aim_dir,
+            speed,
+            (up_now, g.hero.heading),
+        )
+    });
+    if let (Some(a), Some(_)) = (&aim, g.boxes.windup) {
+        if !input.mouse_down(MouseButton::Left) {
+            g.boxes.throw(a);
+        }
     }
     if let Some(demo) = g.demo.as_mut() {
         demo.stumbled |= g.hero.stumble > 0.0;
-        run_demo(
-            demo,
-            g.hero.id,
-            &mut g.inv,
-            &g.response,
-            &g.waters,
-            world,
-            frame,
-        )?;
+        run_demo(demo, g.hero.id, &mut g.boxes, &g.waters, world, frame)?;
         keys = HeroInput::default();
     }
-    g.inv.tick(world, dt);
+    g.boxes.tick(world, hero_id, feet, dt)?;
 
     // --- The field this frame ---
     let up = g.hero.state(world).up;
@@ -243,7 +238,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         g.hero.cam_up
     };
     let hand = g.hero.hand(world);
-    let mut field = field_with(&g.base, g.inv.sources(hero_id, hand, up));
+    let mut field = g.base.clone();
+    field.sources = g.boxes.sources();
     if let Some((at, g_max, radius)) = g.tour.as_ref().and_then(|t| t.stone()) {
         // The screenshot tour's own open stone, for views that want one.
         field.sources.push(grav_core::Source::new(
@@ -260,30 +256,6 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.grass.update(world, &field, eye)?;
     world.report("grass clumps", g.grass.count());
 
-    // A15: a held stone is pushed by opposite charges, and drags the hero.
-    let held = g
-        .inv
-        .stones
-        .iter()
-        .find(|s| matches!(s.placement, Placement::Held { .. }) && s.opening > 0.0);
-    if let Some(s) = held {
-        let q = BodyQuery {
-            id: hero_id.raw(),
-            position: hand,
-            mass: 1.0,
-            lodestone: Some(LodestoneBody {
-                charge: s.spec.charge,
-                opening: s.opening,
-                source: Some(s.id),
-            }),
-        };
-        let ordinary = field.parts(&q).total();
-        let push = field.acceleration(&q) - ordinary * (1.0 - s.opening);
-        if push.length_squared() > 1e-6 {
-            world.push_character(hero_id, push * dt)?;
-        }
-    }
-
     g.hero.update(world, keys, &g.tuning.movement, dt)?;
     // Buildings a stone's field reaches become their bonded pieces.
     g.town
@@ -295,23 +267,11 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.visuals.dust(world, &field, head, dt)?;
     g.visuals
         .sense(world, input.down(Key::R).then_some(&field), head)?;
-    let opening_keys = input.down(Key::F) || input.down(Key::C);
-    let preview = if aiming {
-        target.map(|hit| {
-            let s = g.inv.current();
-            let mut probe = s.clone();
-            probe.opening = 1.0;
-            let mut with = field.clone();
-            with.sources.retain(|x| x.id != s.id);
-            with.sources
-                .push(probe.source_at(hit.point + hit.normal * 0.15, hit.normal, None));
-            (hit.point, hit.normal, with)
-        })
-    } else {
-        None
-    };
-    match &preview {
-        Some((landing, normal, with)) => {
+    // The throw preview: the target under the mouse, where the box would
+    // stop, the sides it will open, your fall and what would break.
+    match &aim {
+        Some(a) => {
+            let with = g.boxes.preview_field(&field, a);
             let center = feet + up * 0.7;
             let fall = with.acceleration(&BodyQuery {
                 id: hero_id.raw(),
@@ -319,24 +279,49 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
                 mass: 70.0,
                 lodestone: None,
             });
-            g.visuals.preview(
-                world,
-                Some((
-                    *landing,
-                    *normal,
-                    center,
-                    fall,
-                    g.inv.current().spec.charge == Charge::Repelling,
-                )),
-            )?;
-            g.response.preview(world, Some(with))?;
+            let zone = world
+                .cast_ray_ignoring(eye, ray, 120.0, hero_id)
+                .filter(|h| {
+                    h.point.distance(hand_now)
+                        <= g.boxes.flight().range(g.boxes.flight().max_speed) + 2.0
+                });
+            match zone {
+                Some(h) => g.visuals.preview(
+                    world,
+                    Some((
+                        h.point,
+                        h.normal,
+                        center,
+                        fall,
+                        g.boxes.current().spec.charge == Charge::Repelling,
+                    )),
+                )?,
+                None => g.visuals.preview(world, None)?,
+            }
+            g.response.preview(world, Some(&with))?;
         }
         None => {
             g.visuals.preview(world, None)?;
             g.response.preview(world, None)?;
         }
     }
-    g.inv.draw(world, hand, aiming || opening_keys)?;
+    let hand_frame = {
+        let front = (g.hero.heading - up * g.hero.heading.dot(up))
+            .normalize_or(up.any_orthonormal_vector());
+        Quat::from_mat3(&engine::glam::Mat3::from_cols(up.cross(front), up, front))
+    };
+    // The ghost shows while the throw winds up; before that, only the
+    // target under the mouse.
+    let ghost = aim.filter(|_| g.boxes.windup.is_some());
+    g.boxes.draw(world, hand, hand_frame, ghost.as_ref(), dt)?;
+    if g.demo.is_some() && (3.4..3.9).contains(&frame.time) {
+        // A close look at the hanging box with its front lid open.
+        if let Some(at) = g.boxes.position(0) {
+            let f = g.boxes.stones[0].frame;
+            let eye = at + f * Vec3::new(0.7, 0.35, 0.9);
+            world.look_at_up(eye, at, f * Vec3::Y);
+        }
+    }
 
     // --- HUD ---
     match g.tour.as_mut() {
@@ -364,7 +349,6 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         );
     }
     world.report("hero_pull_g", g.hero.pull_g);
-    world.report("coating", g.inv.coating.units);
     world.report("pieces_broken", g.response.broken_total);
     world.report("buildings_woken", g.town.woken);
     world.report("buildings", g.town.count().0);
@@ -375,48 +359,6 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
 
 fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     let ui = &frame.ui;
-    let s = g.inv.current();
-    let charge = match s.spec.charge {
-        Charge::Attracting => "attracting",
-        Charge::Repelling => "repelling",
-    };
-    let place = match s.placement {
-        Placement::Packed => "packed",
-        Placement::Held { .. } => "in hand",
-        Placement::Set { .. } => "set",
-        Placement::Loose { .. } => "flying",
-    };
-    ui.text(
-        Anchor::TopLeft,
-        format!(
-            "Stone {} of {}: {} ({charge}, {:.1} g, {:.0} m, {:?})",
-            g.inv.selected + 1,
-            g.inv.stones.len(),
-            s.spec.name,
-            s.spec.max_g,
-            s.spec.radius,
-            s.spec.profile
-        ),
-    );
-    ui.bar(
-        Anchor::TopLeft,
-        "Sheath open",
-        s.opening,
-        1.0,
-        rgb(230, 170, 70),
-    );
-    ui.text(Anchor::TopLeft, format!("It is {place}"));
-    if g.inv.coating.unlimited {
-        ui.text(Anchor::TopLeft, "Coating: unlimited");
-    } else {
-        ui.bar(
-            Anchor::TopLeft,
-            "Coating",
-            g.inv.coating.units,
-            g.tuning.start_coating.max(g.inv.coating.units),
-            rgb(170, 170, 200),
-        );
-    }
     ui.bar(
         Anchor::TopRight,
         "Health",
@@ -425,190 +367,129 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
         rgb(200, 60, 60),
     );
     let state = if g.hero.drifting {
-        "drifting".to_string()
+        "drifting"
     } else if g.hero.walking_allowed {
-        "standing".to_string()
+        "standing"
     } else {
-        "falling".to_string()
+        "falling"
     };
     ui.text(
         Anchor::TopRight,
         format!("Pull {:.2} g, {state}", g.hero.pull_g),
     );
-    ui.text(
-        Anchor::TopRight,
-        format!(
-            "Broken pieces {}, warning {}",
-            g.response.broken_total, g.response.warning_now
-        ),
-    );
-    if let Some((m, _)) = &g.inv.message {
+    if let Some((m, _)) = &g.boxes.message {
         ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
     }
+    if let Some(w) = g.boxes.windup {
+        let f = g.boxes.flight();
+        let speed = f.speed_after(w);
+        ui.bar(
+            Anchor::Bottom,
+            &format!("Throw {:.0} m", f.range(speed)),
+            speed - f.min_speed,
+            f.max_speed - f.min_speed,
+            boxes::charge_color(g.boxes.current().spec.charge),
+        );
+    }
+    let feet = g.hero.feet(world);
+    let ctx = frame.ui.ctx();
+    g.boxes.belt(ctx, feet);
+    g.boxes
+        .countdowns(ctx, world, frame.width as f32, frame.height as f32);
+    g.boxes.bench_window(ctx);
     ui.text_styled(
-        Anchor::Bottom,
-        "WASD walk  Shift sprint  Q/E turn  Space jump  1-9 stone  F open  C close  G hold/pack  Click throw  V set  X recover  Z recall  R sense  P palette",
-        14.0,
-        rgb(220, 220, 220),
+        Anchor::BottomLeft,
+        "WASD walk  Shift sprint  Q/E turn  RMB look  1-9 box  hold LMB throw  Tab bench  R sense",
+        13.0,
+        rgb(200, 200, 200),
     );
-    if g.palette {
-        palette(g, world, frame);
-    }
-}
-
-/// Sandbox palette: dress the selected stone freely, coating on or off.
-fn palette(g: &mut Game, _world: &mut World, frame: &Frame) {
-    let t = &g.tuning;
-    let (max_g, max_r) = (t.loot_max_g, t.loot_max_radius);
-    let mut unlimited = g.inv.coating.unlimited;
-    let (selected, count, pull) = (g.inv.selected, g.inv.stones.len(), g.hero.pull_g);
-    let s = &mut g.inv.stones[selected];
-    egui::Window::new("Sandbox palette").show(frame.ui.ctx(), |ui| {
-        ui.label(format!("Stone {}", selected + 1));
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut s.spec.charge, Charge::Attracting, "Attracting");
-            ui.selectable_value(&mut s.spec.charge, Charge::Repelling, "Repelling");
-        });
-        ui.horizontal_wrapped(|ui| {
-            for p in [
-                Profile::Core,
-                Profile::Leash,
-                Profile::Shell,
-                Profile::Uniform,
-                Profile::Plane,
-                Profile::Line,
-            ] {
-                ui.selectable_value(&mut s.spec.profile, p, format!("{p:?}"));
-            }
-        });
-        ui.add(egui::Slider::new(&mut s.spec.max_g, 0.1..=max_g).text("max g"));
-        ui.add(egui::Slider::new(&mut s.spec.radius, 5.0..=max_r).text("radius m"));
-        let mut pulse = matches!(s.spec.time, grav_core::TimeDial::Pulse { .. });
-        let mut rhythm = matches!(s.spec.time, grav_core::TimeDial::Rhythm { .. });
-        ui.horizontal(|ui| {
-            if ui.checkbox(&mut pulse, "Pulse 1 s on / 1 s off").changed() {
-                s.spec.time = if pulse {
-                    grav_core::TimeDial::Pulse { on: 1.0, off: 1.0 }
-                } else {
-                    grav_core::TimeDial::Constant
-                };
-            }
-            if ui.checkbox(&mut rhythm, "Rhythm 4 s").changed() {
-                s.spec.time = if rhythm {
-                    grav_core::TimeDial::Rhythm { period: 4.0 }
-                } else {
-                    grav_core::TimeDial::Constant
-                };
-            }
-        });
-        let mut heavy_only = matches!(s.spec.selectivity, grav_core::Selectivity::MassBand { .. });
-        if ui
-            .checkbox(&mut heavy_only, "Only bodies over 100 kg")
-            .changed()
-        {
-            s.spec.selectivity = if heavy_only {
-                grav_core::Selectivity::MassBand {
-                    min: 100.0,
-                    max: f32::INFINITY,
-                }
-            } else {
-                grav_core::Selectivity::All
-            };
-        }
-        if ui
-            .checkbox(&mut s.spec.spring_sheath, "Spring sheath (recall)")
-            .changed()
-        {
-            s.refill_spring();
-        }
-        ui.checkbox(&mut unlimited, "Unlimited coating");
-        ui.label(format!("{count} stones; pull at the hero {pull:.2} g"));
-    });
-    if unlimited != g.inv.coating.unlimited {
-        g.inv.coating = if unlimited {
-            grav_core::Coating::unlimited()
-        } else {
-            grav_core::Coating::new(g.tuning.start_coating)
-        };
-    }
 }
 
 fn run_demo(
     demo: &mut Demo,
     hero: EntityId,
-    inv: &mut Inventory,
-    response: &Response,
+    boxes: &mut Boxes,
     waters: &water::Waters,
     world: &mut World,
     frame: &Frame,
 ) -> EngineResult<()> {
     let t = frame.time;
+    let up_at = |world: &World| world.character(hero).map_or(Vec3::Y, |s| s.up);
     match demo.step {
-        0 if t > 0.5 => {
-            // Set the first stone in the street at z = 0, and open it.
-            inv.selected = 0;
-            inv.hold_or_stow(hero);
-            let (at, rot) = space::spire_frame(-9.0, 0.0);
-            let target = at + rot * Vec3::new(0.0, 2.5, -3.5);
-            inv.stones[0].placement = Placement::Set {
-                at: target,
-                axis: rot * Vec3::Y,
-                on: None,
-            };
-            inv.stones[0].open_to(1.0);
+        0 if t > 0.6 => {
+            // Throw box 1 with a short wind-up: shut, it flies straight and
+            // air stops it where the range says.
+            boxes.pick(0);
+            let up = up_at(world);
+            let feet = world.world_transform(hero)?.w_axis.truncate();
+            let from = feet + up * 1.0;
+            let heading = (Vec3::Z - up * up.z).normalize_or(up.any_orthonormal_vector());
+            let dir = (heading + up * 0.25).normalize();
+            let speed = boxes.flight().speed_after(0.5);
+            boxes.stones[0].program = Program::only(&[Face::Front], 0.3, 1.5);
+            let aim = boxes.aim(world, hero, from, dir, speed, (up, heading));
+            demo.throw_rest = aim.rest;
+            boxes.throw(&aim);
+            world.check(
+                "a thrown box is shut in flight",
+                boxes.stones[0].source(None).is_none(),
+            );
             demo.step = 1;
         }
-        1 if t > 2.5 => {
-            demo.broken_open = response.broken_total;
-            // Walk the hero over (the demo teleports): closing needs reach.
-            let (at, rot) = space::spire_frame(-9.0, 0.0);
-            let near = at + rot * Vec3::new(0.0, 0.0, -4.2);
-            world.set_place(hero, Place::new(near.x, near.y + 0.05, near.z))?;
+        1 if t > 3.3 => {
+            let at = boxes.position(0).unwrap_or(Vec3::ZERO);
+            world.report("demo_throw_miss_m", at.distance(demo.throw_rest));
+            world.check(
+                "a thrown box hangs where the preview said",
+                matches!(
+                    boxes.stones[0].state,
+                    BoxState::Resting { .. } | BoxState::Dropped { .. }
+                ) && at.distance(demo.throw_rest) < 0.3,
+            );
+            world.check("its front face has opened", boxes.stones[0].open[0]);
             demo.step = 2;
         }
-        2 if t > 3.0 => {
-            demo.coating_before = inv.coating.units;
-            inv.selected = 0;
-            let feet = world.world_transform(hero)?.w_axis.truncate();
-            inv.close(1.0, feet, world);
-            let paid = demo.coating_before - inv.coating.units;
+        2 if t > 4.7 => {
             world.check(
-                "closing a fully open 1.5 g stone costs 1.5 coating (S9)",
-                (paid - 1.5).abs() < 1e-3,
+                "the box came down when its drop timer ran out",
+                matches!(boxes.stones[0].state, BoxState::Dropped { .. }),
             );
-            world.report("demo_paid", paid);
             demo.step = 3;
         }
-        3 if t > 4.0 => {
-            world.report("demo_broken_while_open", demo.broken_open);
-            let s = world.character(hero).unwrap_or_default();
-            world.check(
-                "hero stands on the spire after the demo",
-                s.grounded || s.gravity.length() > 0.5 * G,
-            );
+        3 if t > 5.5 => {
+            // Walk to it (the demo teleports) and pick it up.
+            if let Some(at) = boxes.position(0) {
+                let up = up_at(world);
+                world.set_place(hero, place_at(at + up * 0.3))?;
+            }
             demo.step = 4;
         }
-        4 if t > 4.5 => {
-            // Hang the second stone over the pool and open it: the water
-            // rises to it.
+        4 if t > 6.0 => {
+            world.check(
+                "the hero picked the dropped box up",
+                boxes.stones[0].is_ready(),
+            );
+            // Hang box 2 over the spring with only its down face open: the
+            // water rises to it.
             let pool = &waters.pool;
             let above = pool.at + pool.rot * Vec3::new(0.0, 3.5, 0.0);
             demo.pool_start = world
                 .fluid(pool.fluid)
                 .and_then(|f| f.center())
                 .unwrap_or(pool.at);
-            inv.stones[1].placement = Placement::Set {
-                at: above,
-                axis: pool.rot * Vec3::NEG_Y,
-                on: None,
-            };
-            inv.stones[1].open_to(1.0);
-            // Walk over to watch (the demo teleports).
+            let s = &mut boxes.stones[1];
+            s.program = Program::only(&[Face::Down], 0.0, 30.0);
+            let up = pool.rot * Vec3::Y;
+            let front = (pool.rot * Vec3::Z).normalize();
+            let frame_rot =
+                Quat::from_mat3(&engine::glam::Mat3::from_cols(up.cross(front), up, front));
+            s.throw(above, Vec3::ZERO, frame_rot);
+            s.rest_at(above);
             let (near, _) = space::spire_frame(16.0, -88.0);
-            world.set_place(hero, Place::new(near.x, near.y + 0.05, near.z))?;
+            world.set_place(hero, place_at(near + Vec3::Y * 0.05))?;
             demo.step = 5;
         }
-        5 if t > 7.0 => {
+        5 if t > 8.5 => {
             let pool = &waters.pool;
             let above = pool.at + pool.rot * Vec3::new(0.0, 3.5, 0.0);
             let now = world
@@ -617,43 +498,43 @@ fn run_demo(
                 .unwrap_or(pool.at);
             let rose = demo.pool_start.distance(above) - now.distance(above);
             world.report("demo_pool_rose_m", rose);
-            world.check("an open stone over the pool lifts its water", rose > 0.3);
-            // Close it, and stand somewhere quiet for the next part.
-            inv.stones[1].opening = 0.0;
+            world.check(
+                "a box open downwards over the spring lifts its water",
+                rose > 0.3,
+            );
             let (quiet, _) = space::spire_frame(-20.0, -60.0);
-            world.set_place(hero, Place::new(quiet.x, quiet.y + 0.05, quiet.z))?;
+            world.set_place(hero, place_at(quiet + Vec3::Y * 0.05))?;
             demo.step = 6;
         }
-        6 if t > 8.0 => {
-            // P9, P12: a stone opened 7 m to the side drags the hero to it.
+        6 if t > 9.5 => {
+            // P9, P12: box 1 again, open all round and hanging 7 m to
+            // the side, drags the hero to it.
             let (at, rot) = space::spire_frame(-20.0, -60.0);
             demo.drag_start = world.world_transform(hero)?.w_axis.truncate();
             demo.drag_stone = at + rot * Vec3::new(0.0, 1.0, 7.0);
-            inv.stones[0].placement = Placement::Set {
-                at: demo.drag_stone,
-                axis: rot * Vec3::Y,
-                on: None,
-            };
-            inv.stones[0].open_to(1.0);
+            let s = &mut boxes.stones[0];
+            s.program = Program::default();
+            s.program.faces = [Some(0.0); 6];
+            s.throw(demo.drag_stone, Vec3::ZERO, rot);
+            s.rest_at(demo.drag_stone);
             demo.stumbled = false;
             demo.step = 7;
         }
-        7 if t > 9.5 => {
+        7 if t > 11.0 => {
             let now = world.world_transform(hero)?.w_axis.truncate();
             let closer = demo.drag_start.distance(demo.drag_stone) - now.distance(demo.drag_stone);
             world.report("demo_dragged_m", closer);
-            world.check(
-                "an open stone beside the hero drags him to it",
-                closer > 1.5,
-            );
+            world.check("an open box beside the hero drags him to it", closer > 1.5);
             world.check("a sudden pull makes the hero stumble", demo.stumbled);
-            inv.stones[0].opening = 0.0;
-            // Take the shard in hand: the target zone shows under the mouse.
-            inv.selected = 2;
-            inv.hold_or_stow(hero);
+            // Take the shard in hand: the preview shows.
+            boxes.pick(2);
             demo.step = 8;
         }
         _ => {}
     }
     Ok(())
+}
+
+fn place_at(p: Vec3) -> Place {
+    Place::new(p.x, p.y, p.z)
 }
