@@ -458,7 +458,7 @@ mod tests {
         s.program = Program::only(&[Face::Front], 0.0, 99.0);
         let front = Vec3::X;
         let up = Vec3::Y;
-        let frame = Quat::from_mat3(&glam::Mat3::from_cols(up.cross(front), up, front));
+        let frame = crate::facing(up, front);
         s.throw(Vec3::ZERO, Vec3::ZERO, frame);
         s.rest_at(Vec3::ZERO);
         s.tick(0.1);

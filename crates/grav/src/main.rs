@@ -321,7 +321,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let hand_frame = {
         let front = (g.hero.heading - up * g.hero.heading.dot(up))
             .normalize_or(up.any_orthonormal_vector());
-        Quat::from_mat3(&engine::glam::Mat3::from_cols(up.cross(front), up, front))
+        grav_core::facing(up, front)
     };
     g.boxes.draw(world, hand, hand_frame, aim.as_ref(), dt)?;
     if g.demo.is_some() && (3.4..3.9).contains(&frame.time) {
@@ -515,8 +515,7 @@ fn run_demo(
             s.program = Program::only(&[Face::Down], 0.0, 30.0);
             let up = pool.rot * Vec3::Y;
             let front = (pool.rot * Vec3::Z).normalize();
-            let frame_rot =
-                Quat::from_mat3(&engine::glam::Mat3::from_cols(up.cross(front), up, front));
+            let frame_rot = grav_core::facing(up, front);
             s.throw(above, Vec3::ZERO, frame_rot);
             s.rest_at(above);
             let (near, _) = space::spire_frame(16.0, -88.0);

@@ -19,7 +19,6 @@ use crate::flora::{arc, fine, hash, smooth, solid, Form, Stand, Stuff};
 use crate::pieces::{shatter, Cells, Hold, Shard};
 use crate::rock::{self, Rock, Waters};
 use crate::space;
-use engine::glam::Mat3;
 use engine::prelude::*;
 use grav_core::BondClass;
 use std::f32::consts::{PI, TAU};
@@ -254,8 +253,8 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
             let up = (-pull).normalize_or(Vec3::Z);
             let out = Vec3::new(theta.sin(), theta.cos(), 0.0) * if inner { 1.0 } else { -1.0 };
             let front = (out - up * out.dot(up)).normalize_or(up.any_orthonormal_vector());
-            let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front))
-                * Quat::from_rotation_y((hash(k, 2) - 0.5) * 0.7);
+            let rot =
+                grav_core::facing(up, front) * Quat::from_rotation_y((hash(k, 2) - 0.5) * 0.7);
             sites.push(Site {
                 make: Make::Shack,
                 variant: (hash(k, 3) * 3.0) as u32 % 3,

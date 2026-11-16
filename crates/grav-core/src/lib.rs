@@ -34,5 +34,12 @@ pub use vein::{Vein, VeinShape};
 
 pub use glam::{Quat, Vec3};
 
+/// The rotation that turns +Y to `up` and +Z to `front`: how a thing stands
+/// on ground whose down is `-up`, facing `front`. Both unit and square to
+/// each other.
+pub fn facing(up: Vec3, front: Vec3) -> Quat {
+    Quat::from_mat3(&glam::Mat3::from_cols(up.cross(front), up, front))
+}
+
 /// 1 g in m/s². Pull strengths in the design are given in g.
 pub const G: f32 = 9.81;

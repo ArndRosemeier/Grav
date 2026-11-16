@@ -322,7 +322,7 @@ impl Boxes {
         let front = across.try_normalize().unwrap_or_else(|| {
             (heading - up * heading.dot(up)).normalize_or(up.any_orthonormal_vector())
         });
-        let frame = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front));
+        let frame = grav_core::facing(up, front);
         Aim {
             from,
             dir,
