@@ -58,9 +58,21 @@ run the game to override any of them.
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+python tools/test.py
+```
+
+`tools/test.py` runs the essential tests: the ones that catch game-breaking bugs
+(attraction, the hero, stones, bonds, which way is down). Each has a budget of
+10 ms, which the script measures and enforces. Every other test is marked
+`#[ignore = "full"]` and runs only on demand, with no time budget:
+
+```bash
+python tools/test.py --full
 python tools/verify.py grav --frames 600 --shots 60,150,420,560
 ```
+
+The verify run (the scripted demo) is on demand too: under a minute on a desktop
+GPU, about 25 minutes on a software renderer.
 
 A screenshot tour of the world (no hero camera, no HUD; a new view every 12 frames):
 

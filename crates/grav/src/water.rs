@@ -107,6 +107,7 @@ mod tests {
     use grav_core::BodyQuery;
 
     #[test]
+    #[ignore = "full"]
     fn the_island_holds_its_lake_up() {
         // Under the island its vein outweighs the heart's push: water there
         // falls up, into the basin.
@@ -119,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_pool_has_down_into_the_spire() {
         let field = space::base_field();
         let (at, rot) = space::spire_frame(crate::rock::SPRING_AT.0, crate::rock::SPRING_AT.1);

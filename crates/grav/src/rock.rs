@@ -1119,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "full: a printout of where the water lies, asserts nothing"]
     fn where_the_water_is() {
         let rock = Rock::new();
         let w = rock.waters(space::HEART_CENTER.normalize());
@@ -1158,6 +1158,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_spring_basin_is_a_hollow_in_the_town() {
         let rock = Rock::new();
         let r = rock.spire_radius(SPRING_AT.0.to_radians(), SPRING_AT.1);
@@ -1172,6 +1173,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_town_ground_is_gentle_and_never_below_the_plain_cylinder() {
         let rock = Rock::new();
         for zi in -90..=40 {
@@ -1188,6 +1190,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_spire_ends_in_a_point() {
         let rock = Rock::new();
         assert!(rock.spire_radius(0.3, SPIRE_TIP) < 0.5);
@@ -1196,6 +1199,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_island_keeps_its_perch_and_lake_bed() {
         let rock = Rock::new();
         for dir in [Vec3::NEG_Y, Vec3::new(0.0, 1.0, 0.2).normalize()] {
@@ -1205,6 +1209,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_dwarven_street_on_the_wall_is_gentle() {
         let rock = Rock::new();
         for x in [-190.0, -170.0, 170.0, 190.0] {
@@ -1214,6 +1219,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_wall_far_from_the_spire_is_settled_at_its_plane() {
         // The wall's vein lies as deep as it must for the plane z = WALL_Z
         // to be on the same level as the town's ground.
@@ -1224,6 +1230,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_flare_joins_spire_and_wall() {
         let rock = Rock::new();
         let top = rock.flare_point(0.0, 0);
@@ -1242,6 +1249,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn down_is_square_to_the_road_from_the_town_to_the_wall() {
         // Walk the road along the top of the spire, down the flare and out
         // onto the wall: the pull never leans more than a few degrees from

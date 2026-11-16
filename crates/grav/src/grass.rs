@@ -226,6 +226,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn grass_stands_against_the_pull_and_turns_to_an_open_stone() {
         let base = space::base_field();
         // On top of the spire the pull is towards its axis: up is +y.
@@ -254,6 +255,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn a_clump_is_light() {
         assert!(clump(0).unwrap().face_count() < 900);
         assert!(clump(1).unwrap().face_count() < 220);

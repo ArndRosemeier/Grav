@@ -342,6 +342,7 @@ mod tests {
     use engine::prelude::*;
 
     #[test]
+    #[ignore = "full"]
     fn every_sound_of_straining_and_breaking_is_there_and_plays() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/sounds");
         for name in ["strain_light", "strain_heavy", "break_light", "break_heavy"] {

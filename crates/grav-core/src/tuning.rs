@@ -95,6 +95,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn the_start_kit_matches_the_design() {
         let t = Tuning::default();
         assert_eq!(t.start_stones.len(), 3);

@@ -1540,6 +1540,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn every_plant_shape_builds_at_every_level() {
         let shapes: [Shaper; 6] = [reed, cap, fan, bell, tree, tuft];
         for shape in shapes {
@@ -1555,6 +1556,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn a_turned_shape_faces_outwards_whichever_way_its_profile_runs() {
         for profile in [
             vec![(1.0, 0.0), (1.2, 1.0), (0.8, 2.0), (0.0, 3.0)],
@@ -1575,6 +1577,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn a_close_up_tree_has_a_few_thousand_triangles() {
         let n = tree(1, 0).unwrap().face_count();
         assert!((3000..40_000).contains(&n), "{n}");

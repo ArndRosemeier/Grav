@@ -398,6 +398,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn goods_are_small_things_with_a_close_up_shape() {
         for (name, shape) in [
             ("jar", jar as fn(u32, u32) -> EngineResult<Form>),

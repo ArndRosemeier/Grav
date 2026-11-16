@@ -1450,6 +1450,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn every_building_builds_at_every_level_and_as_a_solid() {
         for make in MAKES {
             let shape: Shaper = match make {
@@ -1480,6 +1481,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn every_building_comes_apart_into_pieces_that_hang_together() {
         for make in MAKES {
             let shape: Shaper = match make {
@@ -1530,6 +1532,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn the_town_has_towers_holds_and_shacks() {
         let rock = rock::shared();
         let sites = plan(rock, &rock.waters(space::HEART_CENTER.normalize()));

@@ -14,4 +14,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # Essential tests only (10 ms budget each); the rest run with --full on demand.
+      - run: python3 tools/test.py

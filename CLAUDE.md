@@ -6,7 +6,8 @@
 - Numbers to tune belong in `grav_core::Tuning` (JSON-loadable), not as constants in game code.
 - Engine changes go to https://github.com/ArndRosemeier/Engine (its own CI: fmt, clippy, tests, verify runs, a 0.001 version bump per change). Read its AGENTS.md before changing it.
 - One mechanic, one implementation (Arnd, 2026-11-16): duplicated mechanics drift apart when the rules change. Before adding a helper or a rule, look for an existing one; run `python tools/dupes.py` after larger changes and merge any new copy it finds.
-- Checks before pushing: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`.
+- Checks before pushing: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && python tools/test.py`.
+- Tests (Arnd, 2026-11-16): only essential tests (they catch game-breaking bugs) run on every build, and each has a 10 ms budget that `tools/test.py` enforces; one over it needs `// Over budget: <reason>` above its `#[test]`. Every other test is `#[ignore = "full"]` and runs only when asked for (`python tools/test.py --full`, no budget). A new test is full unless it guards against a game-breaking bug and fits the budget. The demo verify run (`tools/verify.py`) is on demand too.
 
 ## Quality bar (Arnd, 2026-11-15; taken from HeroWorld's AGENTS.md)
 

@@ -702,6 +702,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "full"]
     fn the_cavern_wall_lies_behind_the_test_space_wall() {
         let cavern = Cavern::new();
         for (x, y) in [(0.0, 0.0), (500.0, -300.0), (-700.0, 600.0)] {
@@ -712,6 +713,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn spires_keep_clear_of_the_test_space_and_the_heart() {
         let cavern = Cavern::new();
         let spires = cavern.spires();

@@ -308,6 +308,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn water_runs_down_a_slope_and_gathers() {
         // A valley along z that falls towards z = 0.
         let g = ground(60, |x, z| (x - 30.0).abs() * 0.3 + z * 0.1);
@@ -320,6 +321,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn a_hollow_holds_a_pool_no_deeper_than_its_rim() {
         // A bowl 6 m deep in the middle of a gentle slope.
         let bowl = |x: f32, z: f32| {

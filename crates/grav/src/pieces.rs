@@ -243,6 +243,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full"]
     fn a_skin_is_cut_into_thick_pieces_that_hold_each_other() {
         let form = tube();
         let shards = shatter(&form, Cells::Round(2.0, 6), Hold::Foot, &|_| {
