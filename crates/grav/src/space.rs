@@ -39,15 +39,31 @@ pub const HEART_CENTER: Vec3 = Vec3::new(1500.0, 2700.0, 5200.0);
 
 /// Veins and heart for this space.
 pub fn base_field() -> Field {
-    let spire = Vein::new(
-        "spire",
-        vec![VeinShape::Capsule {
-            a: Vec3::new(0.0, 0.0, -230.0),
-            b: Vec3::new(0.0, 0.0, 220.0),
-            radius: 30.0,
-        }],
-        1.0,
-    );
+    // The spire's vein: a rod 20 m under the ground, and where the rock
+    // tapers to its tip, a chain of cones that narrows with it, so the
+    // ground stays square to the pull all the way out.
+    let mut pieces = vec![VeinShape::Capsule {
+        a: Vec3::new(0.0, 0.0, -230.0),
+        b: Vec3::new(0.0, 0.0, rock::TAPER_START),
+        radius: 30.0,
+    }];
+    // The vein narrows in step with the rock (30 m of its 50 m).
+    const TIP_PIECES: usize = 12;
+    let z_at = |i: usize| {
+        rock::TAPER_START
+            + (rock::SPIRE_TIP - 1.0 - rock::TAPER_START) * i as f32 / TIP_PIECES as f32
+    };
+    let vein_radius = |z: f32| (30.0 * rock::spire_taper(z)).max(0.3);
+    for i in 0..TIP_PIECES {
+        let (z0, z1) = (z_at(i), z_at(i + 1));
+        pieces.push(VeinShape::Cone {
+            a: Vec3::new(0.0, 0.0, z0),
+            b: Vec3::new(0.0, 0.0, z1),
+            radius_a: vein_radius(z0),
+            radius_b: vein_radius(z1),
+        });
+    }
+    let spire = Vein::new("spire", pieces, 1.0);
     let mut wall = Vein::new(
         "outer wall",
         vec![VeinShape::Box {

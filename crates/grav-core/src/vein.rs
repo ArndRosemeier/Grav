@@ -19,6 +19,15 @@ pub enum VeinShape {
         b: Vec3,
         radius: f32,
     },
+    /// A tube from `a` to `b` whose radius changes evenly from `radius_a`
+    /// to `radius_b` (a cone with round ends): the vein in a tapering
+    /// spire.
+    Cone {
+        a: Vec3,
+        b: Vec3,
+        radius_a: f32,
+        radius_b: f32,
+    },
     /// An oriented box with half extents `half`.
     Box {
         center: Vec3,
@@ -57,6 +66,12 @@ impl VeinShape {
                     (c + d / len * radius, len - radius)
                 }
             }
+            VeinShape::Cone {
+                a,
+                b,
+                radius_a,
+                radius_b,
+            } => cone_nearest(p, a, b, radius_a, radius_b),
             VeinShape::Box {
                 center,
                 rotation,
@@ -69,6 +84,56 @@ impl VeinShape {
             }
         }
     }
+}
+
+/// Nearest surface point of a round cone and the distance outside it.
+fn cone_nearest(p: Vec3, a: Vec3, b: Vec3, ra: f32, rb: f32) -> (Vec3, f32) {
+    let ab = b - a;
+    let h = ab.length();
+    let sphere = |c: Vec3, r: f32| {
+        let d = p - c;
+        let len = d.length();
+        if len <= r {
+            (p, 0.0)
+        } else {
+            (c + d / len * r, len - r)
+        }
+    };
+    if h < 1e-6 || (ra - rb).abs() >= h {
+        // One end's ball holds the other: the bigger ball is the shape.
+        return if ra >= rb {
+            sphere(a, ra)
+        } else {
+            sphere(b, rb)
+        };
+    }
+    let axis = ab / h;
+    // In the plane through the axis: x along it, y away from it.
+    let x = (p - a).dot(axis);
+    let off = p - a - axis * x;
+    let y = off.length();
+    let out = if y > 1e-6 {
+        off / y
+    } else {
+        axis.any_orthonormal_vector()
+    };
+    // The side line touches both end balls; (cos, sin) is its outward
+    // normal in that plane.
+    let sin = (ra - rb) / h;
+    let cos = (1.0 - sin * sin).sqrt();
+    let k = -sin * y + cos * x;
+    if k < 0.0 {
+        return sphere(a, ra);
+    }
+    if k > cos * h {
+        return sphere(b, rb);
+    }
+    let d = cos * y + sin * x - ra;
+    if d <= 0.0 {
+        return (p, 0.0);
+    }
+    let normal = out * cos + axis * sin;
+    (p - normal * d, d)
 }
 
 /// A vein and its hold zone.
@@ -171,6 +236,31 @@ impl Vein {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cone_vein_pulls_square_to_its_side() {
+        let cone = VeinShape::Cone {
+            a: Vec3::ZERO,
+            b: Vec3::new(0.0, 0.0, 100.0),
+            radius_a: 30.0,
+            radius_b: 10.0,
+        };
+        // Beside the middle (radius 20 there), 10 m out from the side.
+        let slope = (20.0f32 / 100.0).atan();
+        let normal = Vec3::new(0.0, slope.cos(), slope.sin());
+        let side = Vec3::new(0.0, 20.0, 50.0);
+        let p = side + normal * 10.0;
+        let (q, d) = cone.nearest(p);
+        // (The side touches the end balls, so it stands a little proud.)
+        assert!((d - 9.6).abs() < 0.1, "{d}");
+        assert!(((p - q).normalize() - normal).length() < 0.01, "{q}");
+        // Inside, and past each end.
+        assert_eq!(cone.nearest(Vec3::new(0.0, 5.0, 50.0)).1, 0.0);
+        let (q, d) = cone.nearest(Vec3::new(0.0, 0.0, 130.0));
+        assert!((d - 20.0).abs() < 1e-3 && (q.z - 110.0).abs() < 1e-3);
+        let (_, d) = cone.nearest(Vec3::new(0.0, 0.0, -50.0));
+        assert!((d - 20.0).abs() < 1e-3);
+    }
 
     fn slab() -> Vein {
         // A flat vein under y = 0.

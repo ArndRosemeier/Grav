@@ -73,6 +73,17 @@ struct Settled {
     normals: Vec<(f32, f32)>,
 }
 
+/// Where the spire starts to taper to its tip.
+pub const TAPER_START: f32 = 118.0;
+
+/// The share of the spire's full radius left at `z`: 1 up to
+/// `TAPER_START`, 0 at `SPIRE_TIP`. The vein tapers with it
+/// (`space::base_field`), so the ground stays square to the pull.
+pub fn spire_taper(z: f32) -> f32 {
+    let t = ((z - TAPER_START) / (SPIRE_TIP - TAPER_START)).clamp(0.0, 1.0);
+    1.0 - t.powf(1.7)
+}
+
 impl Settled {
     fn new() -> Self {
         let field = space::base_field();
@@ -485,10 +496,7 @@ impl Rock {
         }
         // The plain body: the settled surface around the vein, with a long
         // taper to the tip where the rock has not settled.
-        let taper = {
-            let t = ((z - 118.0) / (SPIRE_TIP - 118.0)).clamp(0.0, 1.0);
-            1.0 - t.powf(1.7)
-        };
+        let taper = spire_taper(z);
         let base = self.settled.radius(z) * taper;
         let on = Vec3::new(theta.sin() * SPIRE_RADIUS, theta.cos() * SPIRE_RADIUS, z);
         let town = Self::spire_town(z);
@@ -1097,6 +1105,34 @@ pub fn on_workers<T: Send>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pull_stays_square_to_the_spire_out_to_its_tip() {
+        // The smooth spire (without its relief) against the vein's pull,
+        // along the top, from the town out to near the point.
+        let field = space::base_field();
+        let surface = |z: f32| Vec3::new(0.0, SPIRE_RADIUS * spire_taper(z), z);
+        let mut worst: (f32, f32) = (0.0, 0.0);
+        let mut z = 100.0;
+        while z < SPIRE_TIP - 6.0 {
+            let along = (surface(z + 0.25) - surface(z - 0.25)).normalize();
+            let normal = along.cross(Vec3::X).normalize();
+            let pull = field
+                .parts(&grav_core::BodyQuery::at(surface(z) + normal * 0.9))
+                .veins;
+            let tilt = (-pull).angle_between(normal).to_degrees();
+            if tilt > worst.0 {
+                worst = (tilt, z);
+            }
+            z += 0.5;
+        }
+        assert!(
+            worst.0 < 10.0,
+            "{:.1} degrees off at z {}",
+            worst.0,
+            worst.1
+        );
+    }
 
     #[test]
     #[ignore]
