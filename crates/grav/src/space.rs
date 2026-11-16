@@ -102,6 +102,8 @@ pub struct Scenery {
     pub cavern: Vec<(LodId, Vec<Place>)>,
     /// The buildings by kind, for the town that comes apart (town.rs).
     pub town: Vec<crate::town::Kind>,
+    /// The loose goods by kind (goods.rs).
+    pub goods: Vec<crate::goods::Kind>,
 }
 
 impl Scenery {
@@ -128,6 +130,7 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
         built: Vec::new(),
         cavern: Vec::new(),
         town: Vec::new(),
+        goods: Vec::new(),
     };
     // What grows on it: each shape of each kind once, drawn wherever one
     // stands, lighter with distance.
@@ -150,7 +153,7 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
         };
         part.push((set, stand.places.clone()));
         let mut solids = vec![None; stand.places.len()];
-        if let Some(solid) = stand.solid {
+        if let Some(solid) = &stand.solid {
             for (i, place) in stand.places.iter().enumerate() {
                 if place.position.truncate().length() > 420.0 {
                     continue;
@@ -163,11 +166,19 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
                 solids[i] = Some(id);
             }
         }
-        if !stand.pieces.is_empty() {
+        if let Some(mesh) = stand.loose {
+            scenery.goods.push(crate::goods::Kind {
+                set,
+                places: stand.places,
+                solids,
+                mesh,
+            });
+        } else if !stand.pieces.is_empty() {
             scenery.town.push(crate::town::Kind {
                 set,
                 places: stand.places,
                 solids,
+                solid: stand.solid,
                 shards: stand.pieces,
             });
         }

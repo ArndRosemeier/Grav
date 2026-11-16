@@ -1462,6 +1462,8 @@ pub struct Stand {
     pub solid: Option<Mesh>,
     /// The pieces it breaks into (buildings; see pieces.rs).
     pub pieces: Vec<crate::pieces::Shard>,
+    /// Loose goods: the shape each has as a body of its own (goods.rs).
+    pub loose: Option<Mesh>,
 }
 
 /// What a stand is made of (which material draws it).
@@ -1518,6 +1520,7 @@ pub fn stands(plants: &[Plant]) -> Vec<Job> {
                         None
                     },
                     pieces: Vec::new(),
+                    loose: None,
                 })
             }));
         }

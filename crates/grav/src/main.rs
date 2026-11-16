@@ -10,6 +10,7 @@ mod boxes;
 mod cavern;
 mod dwarf;
 mod flora;
+mod goods;
 mod grass;
 mod heart;
 mod hero;
@@ -49,6 +50,7 @@ struct Game {
     scenery: space::Scenery,
     meter: meter::Meter,
     town: town::Town,
+    goods: goods::Goods,
     hero: Hero,
     boxes: Boxes,
     /// Seconds the left button has been held while changing the range.
@@ -95,7 +97,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ..PhysicsSettings::default()
     })?;
     let mut scenery = space::build_rock(world, &look)?;
-    let town = town::Town::new(std::mem::take(&mut scenery.town), look.built);
+    let town = town::Town::new(std::mem::take(&mut scenery.town), look.built, look.unseen);
+    let goods = goods::Goods::new(std::mem::take(&mut scenery.goods), look.built);
     let base = space::base_field();
     let grass = grass::Grass::new(world, look.flora, &scenery.blades, &base)?;
     // Nothing is built here yet (the stand-in town was torn down).
@@ -122,6 +125,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         scenery,
         meter,
         town,
+        goods,
         hero,
         boxes,
         range_held: 0.0,
@@ -299,7 +303,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.hero.update(world, keys, &g.tuning.movement, dt)?;
     // Buildings a stone's field reaches become their bonded pieces.
     g.town
-        .update(world, &mut g.response, &field, &g.base, &g.tuning)?;
+        .update(world, &mut g.response, &field, &g.base, &g.tuning, dt)?;
+    g.goods.update(world, &field)?;
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
 
@@ -370,7 +375,10 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("hero_pull_g", g.hero.pull_g);
     world.report("pieces_broken", g.response.broken_total);
     world.report("buildings_woken", g.town.woken);
+    world.report("buildings_asleep_again", g.town.slept);
     world.report("buildings", g.town.count().0);
+    world.report("goods", g.goods.count());
+    world.report("goods_loose", g.goods.loose_total);
     world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));
     Ok(())

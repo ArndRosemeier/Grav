@@ -33,15 +33,31 @@ pub enum Make {
     Shack,
     Lamp,
     Brazier,
+    /// Loose goods (goods.rs).
+    Jar,
+    Cask,
+    Crate,
+    Sack,
 }
 
-const MAKES: [Make; 6] = [
+impl Make {
+    /// Loose goods: not built, they only stand there.
+    pub fn loose(self) -> bool {
+        matches!(self, Make::Jar | Make::Cask | Make::Crate | Make::Sack)
+    }
+}
+
+const MAKES: [Make; 10] = [
     Make::Tower,
     Make::Bridge,
     Make::Hold,
     Make::Shack,
     Make::Lamp,
     Make::Brazier,
+    Make::Jar,
+    Make::Cask,
+    Make::Crate,
+    Make::Sack,
 ];
 
 /// One thing built: what, which shape of it, where and how it is turned
@@ -61,6 +77,7 @@ fn variants(make: Make) -> u32 {
         Make::Tower => 4,
         Make::Bridge | Make::Hold | Make::Shack => 3,
         Make::Lamp | Make::Brazier => 1,
+        Make::Jar | Make::Cask | Make::Crate | Make::Sack => 2,
     }
 }
 
@@ -248,6 +265,7 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
             });
         }
     }
+    wares(rock, &mut sites);
     // Places to look at in the screenshot tour.
     let mut marks = Vec::new();
     for (make, name, nth) in [
@@ -255,6 +273,10 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
         (Make::Bridge, "built: a bridge between towers", 1),
         (Make::Hold, "built: a dwarven hold", 2),
         (Make::Shack, "built: a goblin shack", 2),
+        (Make::Jar, "goods: jars by a tower", 4),
+        (Make::Cask, "goods: casks by a hold", 3),
+        (Make::Crate, "goods: crates by a shack", 1),
+        (Make::Sack, "goods: sacks by a shack", 1),
     ] {
         if let Some(s) = sites.iter().filter(|s| s.make == make).nth(nth) {
             marks.push((name, s.at, s.rot * Vec3::Y, s.rot * Vec3::Z));
@@ -262,6 +284,65 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
     }
     let _ = LANDMARKS.set(marks);
     sites
+}
+
+/// Loose goods by the buildings' fronts: jars by the towers, casks by the
+/// holds, crates and sacks by the shacks, a few together.
+fn wares(rock: &Rock, sites: &mut Vec<Site>) {
+    let field = space::base_field();
+    let built: Vec<Site> = sites.clone();
+    for (n, s) in built.iter().enumerate() {
+        let k = 9000 + n as u32 * 17;
+        // What, how far out from the middle its front is, how wide that is.
+        let (kinds, front, wide): (&[Make], f32, f32) = match s.make {
+            Make::Tower => (
+                &[Make::Jar],
+                tower_foot(s.variant) + 0.45,
+                tower_foot(s.variant) * 0.8,
+            ),
+            Make::Hold => {
+                let (w, d) = hold_size(s.variant);
+                (&[Make::Cask], d * 0.5 + 0.55, w * 0.4)
+            }
+            Make::Shack => (&[Make::Crate, Make::Sack], 2.7, 1.8),
+            _ => continue,
+        };
+        let count = 1 + (hash(k, 1) * 4.0) as u32;
+        let spot = (hash(k, 2) * 2.0 - 1.0) * wide;
+        for m in 0..count {
+            let km = k + m * 5 + 1;
+            let local = Vec3::new(
+                spot + (m as f32 - count as f32 * 0.5) * 0.78 + 0.2 * (hash(km, 3) - 0.5),
+                0.0,
+                front + 0.45 * hash(km, 4),
+            );
+            let p = s.at + s.rot * local;
+            let theta = p.x.atan2(p.y);
+            let ground = match s.make {
+                Make::Tower => Some(rock.spire_point(theta, p.z)),
+                Make::Hold => Some(rock.wall_point(p.x, p.y)),
+                _ => rock.flare_at(theta, p.truncate().length()),
+            };
+            let Some(at) = ground else { continue };
+            // Not inside the next building.
+            if built
+                .iter()
+                .any(|b| b.at.distance(at) < b.clear * 0.8 && b.at.distance(s.at) > 0.01)
+            {
+                continue;
+            }
+            let pull = field.acceleration(&grav_core::BodyQuery::at(at));
+            let up = (-pull).normalize_or(s.rot * Vec3::Y);
+            sites.push(Site {
+                make: kinds[(hash(km, 6) * kinds.len() as f32) as usize % kinds.len()],
+                variant: (hash(km, 7) * 2.0) as u32 % 2,
+                at: at - up * 0.02,
+                rot: Quat::from_rotation_arc(Vec3::Y, up)
+                    * Quat::from_rotation_y(hash(km, 5) * TAU),
+                clear: 0.45,
+            });
+        }
+    }
 }
 
 /// A place worth a look: its name, where, its up, its front.
@@ -275,13 +356,13 @@ pub fn landmarks() -> &'static [Mark] {
 
 // ---------------------------------------------------------------------
 // What a thing is made of (the material reads it from uv.y).
-const FOAM: f32 = 0.0;
-const LATTICE: f32 = 1.0;
-const BLOCKS: f32 = 2.0;
-const IRON: f32 = 3.0;
-const WOOD: f32 = 4.0;
-const PANE: f32 = 5.0;
-const CLOTH: f32 = 6.0;
+pub(crate) const FOAM: f32 = 0.0;
+pub(crate) const LATTICE: f32 = 1.0;
+pub(crate) const BLOCKS: f32 = 2.0;
+pub(crate) const IRON: f32 = 3.0;
+pub(crate) const WOOD: f32 = 4.0;
+pub(crate) const PANE: f32 = 5.0;
+pub(crate) const CLOTH: f32 = 6.0;
 
 const UP: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
 
@@ -1249,12 +1330,15 @@ type Shaper = fn(u32, u32) -> EngineResult<Form>;
 fn shards(make: Make, form: &Form) -> EngineResult<Vec<Shard>> {
     use BondClass::{Dwarven, Light, Masonry, Timber};
     let is = |kind: f32, what: f32| (kind - what).abs() < 0.5;
+    if make.loose() {
+        return Ok(Vec::new());
+    }
     let (cells, hold): (Cells, Hold) = match make {
         Make::Tower => (Cells::Round(2.4, 6), Hold::Foot),
         Make::Bridge => (Cells::Square(Vec3::new(50.0, 50.0, 2.5)), Hold::Ends),
         Make::Hold => (Cells::Square(Vec3::new(2.2, 1.7, 2.2)), Hold::Foot),
         Make::Shack => (Cells::Square(Vec3::new(1.7, 1.5, 1.7)), Hold::Foot),
-        Make::Lamp | Make::Brazier => (Cells::One, Hold::Foot),
+        _ => (Cells::One, Hold::Foot),
     };
     shatter(form, cells, hold, &|kind| match make {
         // Umbral work: light foamed walls in a lattice of metal.
@@ -1269,7 +1353,7 @@ fn shards(make: Make, form: &Form) -> EngineResult<Vec<Shard>> {
         Make::Hold => (Timber, None),
         // Goblin patchwork: poles hold a little, the rest hardly.
         Make::Shack if is(kind, WOOD) => (Timber, None),
-        Make::Shack | Make::Lamp | Make::Brazier => (Light, None),
+        _ => (Light, None),
     })
 }
 
@@ -1294,6 +1378,10 @@ pub fn stands(sites: &[Site]) -> Vec<Job> {
                     Make::Shack => (shack, [60.0, 220.0, 2500.0]),
                     Make::Lamp => (lamp, [40.0, 140.0, 1200.0]),
                     Make::Brazier => (brazier, [40.0, 140.0, 1200.0]),
+                    Make::Jar => (crate::goods::jar, [16.0, 55.0, 320.0]),
+                    Make::Cask => (crate::goods::cask, [16.0, 55.0, 320.0]),
+                    Make::Crate => (crate::goods::crate_box, [16.0, 55.0, 320.0]),
+                    Make::Sack => (crate::goods::sack, [16.0, 55.0, 320.0]),
                 };
                 let mut levels = Vec::new();
                 for (detail, to) in reach.into_iter().enumerate() {
@@ -1306,6 +1394,11 @@ pub fn stands(sites: &[Site]) -> Vec<Job> {
                     stuff: Stuff::Built,
                     solid: Some(shape(variant, 3)?.mesh),
                     pieces: shards(make, &shape(variant, 0)?)?,
+                    loose: if make.loose() {
+                        Some(shape(variant, 0)?.mesh)
+                    } else {
+                        None
+                    },
                 })
             }));
         }
@@ -1327,6 +1420,10 @@ mod tests {
                 Make::Shack => shack,
                 Make::Lamp => lamp,
                 Make::Brazier => brazier,
+                Make::Jar => crate::goods::jar,
+                Make::Cask => crate::goods::cask,
+                Make::Crate => crate::goods::crate_box,
+                Make::Sack => crate::goods::sack,
             };
             for variant in 0..variants(make) {
                 let mut last = usize::MAX;
@@ -1353,7 +1450,14 @@ mod tests {
                 Make::Shack => shack,
                 Make::Lamp => lamp,
                 Make::Brazier => brazier,
+                Make::Jar => crate::goods::jar,
+                Make::Cask => crate::goods::cask,
+                Make::Crate => crate::goods::crate_box,
+                Make::Sack => crate::goods::sack,
             };
+            if make.loose() {
+                continue;
+            }
             for variant in 0..variants(make) {
                 let form = shape(variant, 0).unwrap();
                 let pieces = shards(make, &form).unwrap();

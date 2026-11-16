@@ -1,7 +1,12 @@
 //! World response: bonded pieces warn, break loose and pass on load
 //! (W1 to W4); broken pieces become bodies that follow the field and clump
 //! (W5, W6); far debris is thinned (W7).
+//!
+//! A piece under strain shows it before it goes: dust trickles from it
+//! along the pull and it knocks; when it breaks there is a cloud of its
+//! own stuff, chips and the sound of it.
 
+use crate::flora::hash;
 use crate::space::{place, Built, PieceRef};
 use engine::prelude::*;
 use grav_core::{BodyQuery, BondClass, Field, PieceStage};
@@ -16,6 +21,20 @@ pub struct Response {
     pub warning_now: usize,
     /// Pieces tinted by the placing preview.
     previewed: Vec<usize>,
+    /// Counts the signs given (dust, sounds), to vary them.
+    signs: u32,
+    /// Seconds until the next trickle of dust from the straining pieces.
+    trickle: f32,
+}
+
+/// The colour of a kind of piece's dust.
+fn dust_of(class: BondClass) -> Color {
+    match class {
+        BondClass::Light => rgb(150, 170, 172),
+        BondClass::Timber => rgb(120, 128, 136),
+        BondClass::Masonry => rgb(104, 104, 108),
+        _ => rgb(70, 68, 70),
+    }
 }
 
 /// Debris further than this from the hero is thinned after a while.
@@ -48,6 +67,8 @@ impl Response {
             broken_total: 0,
             warning_now: 0,
             previewed: Vec::new(),
+            signs: 0,
+            trickle: 0.0,
         }
     }
 
@@ -61,6 +82,96 @@ impl Response {
         }
         self.built.structures.push(structure);
         self.built.pieces.extend(pieces);
+    }
+
+    /// True when every piece of structure `s` stands and is calm.
+    pub fn at_rest(&self, s: usize) -> bool {
+        self.built.structures[s]
+            .pieces
+            .iter()
+            .all(|p| p.stage == PieceStage::Quiet)
+    }
+
+    /// Take structure `s` out of the world again (a building that goes
+    /// back to being one drawn shape). Its place in the list stays, empty.
+    pub fn remove(&mut self, world: &mut World, s: usize) {
+        let mut new_index = Vec::with_capacity(self.built.pieces.len());
+        let mut kept = 0;
+        for p in &self.built.pieces {
+            if p.structure == s {
+                world.despawn(p.entity);
+                new_index.push(None);
+            } else {
+                new_index.push(Some(kept));
+                kept += 1;
+            }
+        }
+        let mut k = 0;
+        self.rest.retain(|_| {
+            k += 1;
+            new_index[k - 1].is_some()
+        });
+        self.built.pieces.retain(|p| p.structure != s);
+        self.previewed = std::mem::take(&mut self.previewed)
+            .into_iter()
+            .filter_map(|k| new_index[k])
+            .collect();
+        self.built.structures[s] = grav_core::Structure::new();
+    }
+
+    /// Dust from piece `k`, `size` metres across, falling the way the pull
+    /// goes there; with `sound`, the knock or crumble of it.
+    fn sign(
+        &mut self,
+        world: &mut World,
+        field: &Field,
+        k: usize,
+        size: f32,
+        sound: bool,
+    ) -> EngineResult<()> {
+        self.signs = self.signs.wrapping_add(1);
+        let p = self.piece_ref(k);
+        let class = self.built.structures[p.structure].piece(p.piece).class;
+        let at = self.rest[k].0;
+        let pull = field.acceleration(&BodyQuery::at(at));
+        let down = pull.normalize_or(Vec3::NEG_Y);
+        let breaking = size > 1.0;
+        // Thin: a haze the pieces show through, not a cloud in front of them.
+        let stuff = dust_of(class);
+        let thin = |a: f32| Color { a, ..stuff };
+        let dust = ParticleEmitter::dust(at, size, stuff)
+            .with_color(thin(if breaking { 0.2 } else { 0.28 }))
+            .with_secondary_color(thin(0.0))
+            .with_size(if breaking { 0.5 } else { 0.22 })
+            .with_lifetime(if breaking { 3.0 } else { 1.8 })
+            .with_velocity(down * 0.4)
+            .with_acceleration(pull * 0.06)
+            .with_seed(self.signs);
+        world.particles_mut().burst(dust)?;
+        if breaking {
+            let chips = ParticleEmitter::debris(at, dust_of(class), 6, 1.6)
+                .with_velocity(down * 0.8)
+                .with_acceleration(pull)
+                .with_seed(self.signs);
+            world.particles_mut().burst(chips)?;
+        }
+        if sound {
+            let variant = (hash(self.signs, 3) * 3.0) as usize % 3;
+            let stock = match (breaking, class) {
+                (true, BondClass::Light | BondClass::Timber) => Stock::KnockSoft,
+                (true, _) => Stock::Crumble,
+                (false, BondClass::Light | BondClass::Timber) => Stock::KnockSoft,
+                (false, _) => Stock::KnockHard,
+            };
+            let volume = if breaking { 0.8 } else { 0.35 };
+            world.play_sound(
+                &Sound::stock(stock, variant),
+                PlaySound::at(at)
+                    .volume(volume)
+                    .pitch(0.85 + 0.3 * hash(self.signs, 4)),
+            );
+        }
+        Ok(())
     }
 
     fn piece_ref(&self, k: usize) -> PieceRef {
@@ -97,6 +208,29 @@ impl Response {
                 tint.push((index[&(s, id)], false));
             }
             let _ = pieces;
+        }
+        // Dust from what strains: at once from a piece that starts to, and
+        // every little while from a few of those that still do.
+        let mut dusty: Vec<usize> = tint.iter().filter(|t| t.1).map(|t| t.0).take(6).collect();
+        self.trickle -= dt;
+        if self.trickle <= 0.0 {
+            self.trickle = 0.35;
+            let straining: Vec<usize> = (0..self.built.pieces.len())
+                .filter(|&k| {
+                    let p = self.built.pieces[k];
+                    self.built.structures[p.structure].piece(p.piece).stage == PieceStage::Warning
+                })
+                .collect();
+            for n in 0..straining.len().min(3) {
+                let pick = hash(self.signs.wrapping_add(n as u32), 7) * straining.len() as f32;
+                dusty.push(straining[(pick as usize).min(straining.len() - 1)]);
+            }
+        }
+        for (n, &k) in dusty.iter().enumerate() {
+            self.sign(world, field, k, 0.45, n == 0 && tint.iter().any(|t| t.1))?;
+        }
+        for (n, &k) in broke.iter().take(10).enumerate() {
+            self.sign(world, field, k, 1.3, n < 2)?;
         }
         for (k, warn) in tint {
             let p = self.piece_ref(k);

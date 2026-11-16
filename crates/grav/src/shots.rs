@@ -65,9 +65,18 @@ impl Tour {
     pub fn stone(&self) -> Option<(Vec3, f32, f32)> {
         let index = (self.first + (self.frame / self.hold) as usize) % self.views.len().max(1);
         let view = self.views.get(index)?;
+        // GRAV_TOUR_STONE=<g>,<fraction>: another strength, and the stone
+        // closes after that part of the view's time.
+        let set = std::env::var("GRAV_TOUR_STONE").ok();
+        let mut set = set.iter().flat_map(|s| s.split(',')).map(str::parse::<f32>);
+        let g = set.next().and_then(Result::ok);
+        let part = set.next().and_then(Result::ok).unwrap_or(1.0);
+        if (self.frame % self.hold) as f32 >= self.hold as f32 * part {
+            return None;
+        }
         match view.name {
             GRASS_STONE => Some((grass_stone().0, 2.5, 12.0)),
-            TOWN_STONE => town_stone().map(|(at, ..)| (at, 3.0, 22.0)),
+            TOWN_STONE => town_stone().map(|(at, ..)| (at, g.unwrap_or(3.0), 22.0)),
             _ => None,
         }
     }
@@ -307,6 +316,9 @@ fn growth_views() -> Vec<View> {
         });
     }
     for &(name, at, up, front) in crate::settle::landmarks() {
+        if name.starts_with("goods") {
+            continue;
+        }
         let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
         views.push(View {
             name,
@@ -371,6 +383,20 @@ fn growth_views() -> Vec<View> {
                 zoom: false,
             });
         }
+    }
+    // Loose goods, close up.
+    for &(name, at, up, front) in crate::settle::landmarks() {
+        if !name.starts_with("goods") {
+            continue;
+        }
+        let side = up.cross(front).normalize_or(up.any_orthonormal_vector());
+        views.push(View {
+            name,
+            eye: at + up * 1.1 + front * 2.3 + side * 1.2,
+            target: at + up * 0.35,
+            up,
+            zoom: false,
+        });
     }
     views
 }
