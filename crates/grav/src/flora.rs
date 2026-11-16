@@ -815,6 +815,16 @@ impl Form {
         let a = up.any_orthonormal_vector();
         let b = up.cross(a);
         let last = profile.len() - 1;
+        // Which way the profile runs: from the top outwards and down (and
+        // back in underneath), or from the foot up. Its normals point out
+        // of the body either way.
+        let turn: f32 = (0..=last)
+            .map(|k| {
+                let (a, b) = (profile[k], profile[(k + 1) % (last + 1)]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum();
+        let side = if turn > 0.0 { -1.0 } else { 1.0 };
         let mut rings = Vec::with_capacity(profile.len());
         for k in 0..=last {
             let (r, h) = profile[k];
@@ -822,7 +832,7 @@ impl Form {
             let (r1, h1) = profile[(k + 1).min(last)];
             // Out of the surface, for a profile that runs from the top
             // outwards and down, then back in underneath.
-            let (nr, nh) = (h0 - h1, r1 - r0);
+            let (nr, nh) = ((h0 - h1) * side, (r1 - r0) * side);
             let mut ring = Vec::with_capacity(sides);
             for j in 0..sides {
                 let angle = j as f32 / sides as f32 * TAU;
@@ -1465,6 +1475,26 @@ mod tests {
                 // Each level is lighter than the one before.
                 assert!(mesh.face_count() < last);
                 last = mesh.face_count();
+            }
+        }
+    }
+
+    #[test]
+    fn a_turned_shape_faces_outwards_whichever_way_its_profile_runs() {
+        for profile in [
+            vec![(1.0, 0.0), (1.2, 1.0), (0.8, 2.0), (0.0, 3.0)],
+            vec![(0.0, 3.0), (0.8, 2.0), (1.2, 1.0), (1.0, 0.0)],
+        ] {
+            let mut f = Form::new();
+            f.lathe(Vec3::ZERO, Vec3::Y, &profile, 12, &|_, _| 1.0, &|_, _| {
+                (Vec3::ONE, 0.0)
+            })
+            .unwrap();
+            for (at, normal) in f.at.iter().zip(&f.normal) {
+                let out = Vec3::new(at.x, 0.0, at.z);
+                if out.length() > 0.5 {
+                    assert!(normal.dot(out) > 0.0, "{at} {normal}");
+                }
             }
         }
     }
