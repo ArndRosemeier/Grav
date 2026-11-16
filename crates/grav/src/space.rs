@@ -93,9 +93,9 @@ pub fn place(at: Vec3, rot: Quat) -> Place {
 
 /// The dead stone: spire, outer wall, island and the far spires, each with
 /// its solid shape from the same mesh that is drawn.
-pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
+pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Vec<crate::grass::Blade>> {
     let heart_dir = HEART_CENTER.normalize();
-    let (pieces, stands) = rock::build_all(rock::shared(), heart_dir)?;
+    let (pieces, stands, blades) = rock::build_all(rock::shared(), heart_dir)?;
     // What grows on it: each shape of each kind once, drawn wherever one
     // stands, lighter with distance.
     for stand in stands {
@@ -148,7 +148,7 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<()> {
             world.set_casts_shadow(level, false)?;
         }
     }
-    Ok(())
+    Ok(blades)
 }
 
 /// A frame standing on the spire's surface at `angle_deg` around the axis

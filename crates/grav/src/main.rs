@@ -9,6 +9,7 @@
 mod cavern;
 mod dwarf;
 mod flora;
+mod grass;
 mod heart;
 mod hero;
 mod link;
@@ -35,6 +36,7 @@ use visuals::Visuals;
 struct Game {
     tuning: Tuning,
     base: grav_core::Field,
+    grass: grass::Grass,
     hero: Hero,
     inv: Inventory,
     response: Response,
@@ -76,8 +78,9 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ground: PhysicsGround::None,
         ..PhysicsSettings::default()
     })?;
-    space::build_rock(world, &look)?;
+    let blades = space::build_rock(world, &look)?;
     let base = space::base_field();
+    let grass = grass::Grass::new(world, look.flora, &blades, &base)?;
     // Nothing is built here yet (the stand-in town was torn down).
     let built = space::Built::default();
     let (at, _) = space::spire_frame(0.0, -75.0);
@@ -96,6 +99,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     Ok(Game {
         tuning,
         base,
+        grass,
         hero,
         inv,
         response,
@@ -229,6 +233,24 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let hand = g.hero.hand(world);
     let field = field_with(&g.base, g.inv.sources(hero_id, hand, up));
     link::install(world, &field, HashMap::new());
+    // The grass shows the pull: it turns to the field around open stones.
+    let eye = world.camera().eye();
+    match g.tour.as_ref().and_then(|t| t.stone()) {
+        Some(at) => {
+            // The screenshot tour's own stone, for the grass alone.
+            let mut shown = field.clone();
+            shown.sources.push(grav_core::Source::new(
+                9000,
+                Charge::Attracting,
+                at,
+                2.5,
+                12.0,
+            ));
+            g.grass.update(world, &shown, eye)?;
+        }
+        None => g.grass.update(world, &field, eye)?,
+    }
+    world.report("grass clumps", g.grass.count());
 
     // A15: a held stone is pushed by opposite charges, and drags the hero.
     let held = g

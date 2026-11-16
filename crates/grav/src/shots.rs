@@ -52,6 +52,13 @@ impl Tour {
     }
 
     /// Set this frame's camera.
+    /// An open stone the view on show wants in the world: where it is.
+    pub fn stone(&self) -> Option<Vec3> {
+        let index = (self.first + (self.frame / HOLD) as usize) % self.views.len().max(1);
+        let view = self.views.get(index)?;
+        (view.name == GRASS_STONE).then(|| grass_stone().0)
+    }
+
     pub fn frame(&mut self, world: &mut World) {
         if !self.grown {
             self.grown = true;
@@ -303,7 +310,52 @@ fn growth_views() -> Vec<View> {
             zoom: false,
         });
     }
+    // The plumb grass: low over the ground, on a steep flank, and
+    // around an open stone (which the tour sets for that view alone).
+    let (lawn, lawn_rot) = space::spire_frame(15.0, -64.0);
+    let (lawn_up, lawn_on) = (lawn_rot * Vec3::Y, lawn_rot * Vec3::Z);
+    views.push(View {
+        name: "grass: low over the ground",
+        eye: lawn + lawn_up * 0.9 - lawn_on * 5.0,
+        target: lawn + lawn_up * 0.8 + lawn_on * 6.0,
+        up: lawn_up,
+        zoom: false,
+    });
+    let (flank, flank_rot) = space::spire_frame(74.0, -40.0);
+    let (flank_up, flank_on) = (flank_rot * Vec3::Y, flank_rot * Vec3::Z);
+    views.push(View {
+        name: "grass: on the flank",
+        eye: flank + flank_up * 6.0 - flank_on * 12.0,
+        target: flank + flank_up * 0.5 + flank_on * 4.0,
+        up: flank_up,
+        zoom: false,
+    });
+    let (stone, up) = grass_stone();
+    let side = lawn_rot * Vec3::X;
+    views.push(View {
+        name: GRASS_STONE,
+        eye: stone + up * 1.6 - lawn_on * 9.0 + side * 2.0,
+        target: stone - up * 0.6,
+        up,
+        zoom: false,
+    });
+    views.push(View {
+        name: GRASS_STONE,
+        eye: stone + up * 13.0 - lawn_on * 5.0,
+        target: stone - up * 1.2,
+        up,
+        zoom: false,
+    });
     views
+}
+
+const GRASS_STONE: &str = "grass: around an open stone";
+
+/// Where the tour's open stone hangs for the grass views, and up there.
+fn grass_stone() -> (Vec3, Vec3) {
+    let (at, rot) = space::spire_frame(15.0, -64.0);
+    let up = rot * Vec3::Y;
+    (at + up * 1.3, up)
 }
 
 fn rock_tip() -> f32 {

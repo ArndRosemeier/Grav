@@ -1033,13 +1033,17 @@ fn island_job(rock: &Rock) -> Box<dyn FnOnce() -> EngineResult<RockPiece> + Send
     })
 }
 
+/// What `build_all` makes: the rock, what stands on it, the grass.
+pub type Grown = (
+    Vec<RockPiece>,
+    Vec<crate::flora::Stand>,
+    Vec<crate::grass::Blade>,
+);
+
 /// Build all the rock on worker threads, and grow what grows on it
 /// (the rock's mesh carries the mats' colours). Takes a few seconds; the
-/// caller spawns the pieces and the plants.
-pub fn build_all(
-    rock: &Rock,
-    heart_dir: Vec3,
-) -> EngineResult<(Vec<RockPiece>, Vec<crate::flora::Stand>)> {
+/// caller spawns the pieces and the plants, and plants the grass.
+pub fn build_all(rock: &Rock, heart_dir: Vec3) -> EngineResult<Grown> {
     let waters = Arc::new(rock.waters(heart_dir));
     // People first: nothing grows where they have built.
     let sites = crate::settle::plan(rock, &waters);
@@ -1054,7 +1058,7 @@ pub fn build_all(
     let mut stand_jobs = crate::flora::stands(&growth.plants);
     stand_jobs.extend(crate::settle::stands(&sites));
     let stands = on_workers(stand_jobs)?;
-    Ok((on_workers(jobs)?, stands))
+    Ok((on_workers(jobs)?, stands, growth.blades.clone()))
 }
 
 /// Run jobs on worker threads and give their results in the jobs' order.

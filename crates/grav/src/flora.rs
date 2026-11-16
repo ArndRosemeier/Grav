@@ -84,6 +84,8 @@ pub struct Growth {
     pub spire_cover: Vec<Vec3>,
     pub wall_cover: Vec<Vec3>,
     pub plants: Vec<Plant>,
+    /// The plumb grass (see grass.rs).
+    pub blades: Vec<crate::grass::Blade>,
 }
 
 /// The mats' colours (the brightest part is 1; the rock's material sets
@@ -615,6 +617,54 @@ fn grow_on(soil: &Soil, cover: &mut [Vec3], seed: u32, plants: &mut Vec<Plant>) 
     }
 }
 
+/// Smooth noise in 0..1 with features `size` metres across.
+fn drift(p: Vec3, size: f32, k: u32) -> f32 {
+    let q = p / size;
+    let base = q.floor();
+    let w = q - base;
+    let w = w * w * (Vec3::splat(3.0) - 2.0 * w);
+    let at = |dx: f32, dy: f32, dz: f32| {
+        let c = base + Vec3::new(dx, dy, dz);
+        let n = (c.x as i32 as u32).wrapping_mul(0x8da6_b343)
+            ^ (c.y as i32 as u32).wrapping_mul(0xd816_3841)
+            ^ (c.z as i32 as u32).wrapping_mul(0xcb1a_b31f);
+        hash(n, k)
+    };
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x0 = mix(at(0.0, 0.0, 0.0), at(1.0, 0.0, 0.0), w.x);
+    let x1 = mix(at(0.0, 1.0, 0.0), at(1.0, 1.0, 0.0), w.x);
+    let x2 = mix(at(0.0, 0.0, 1.0), at(1.0, 0.0, 1.0), w.x);
+    let x3 = mix(at(0.0, 1.0, 1.0), at(1.0, 1.0, 1.0), w.x);
+    mix(mix(x0, x1, w.y), mix(x2, x3, w.y), w.z)
+}
+
+/// The plumb grass: clumps on nearly all ground, in light and shade, on
+/// flats and on steep rock, a few metres apart; only water, roads and
+/// what is built are bare of it. It lies in loose drifts, thicker here
+/// and thinner there, and stands taller where the ground is damp.
+fn plumb_grass(soil: &Soil, seed: u32, blades: &mut Vec<crate::grass::Blade>) {
+    for (i, &at) in soil.ground.at.iter().enumerate() {
+        // Only where the hero can come: the far ground is drawn too
+        // coarsely to root a stalk on.
+        if soil.cell[i] > 3.2 || !soil.open(i, 1.6) {
+            continue;
+        }
+        let area = soil.cell[i] * soil.cell[i];
+        let thick = 0.35 + 1.5 * drift(at, 26.0, 71).powi(2);
+        let wanted = area / 4.5 * thick;
+        let key = seed.wrapping_add(i as u32);
+        let count = wanted.floor() as u32 + u32::from(hash(key, 81) < wanted.fract());
+        for n in 0..count {
+            let k = key.wrapping_mul(31).wrapping_add(n);
+            blades.push(crate::grass::Blade {
+                at: soil.near(i, k),
+                size: 0.65 + 0.5 * hash(k, 82) + 0.35 * smooth(0.1, 0.5, soil.water.wet[i]),
+                turn: hash(k, 83) * TAU,
+            });
+        }
+    }
+}
+
 /// Everything that grows on the spire and the wall. `heart` is the
 /// direction to the heart; `taken` is what is built (where, and how far
 /// around it is kept clear); `path` gives the metres from a point to the
@@ -644,7 +694,11 @@ pub fn grow(
     let mut plants = Vec::new();
     grow_on(&spire, &mut spire_cover, 2000, &mut plants);
     grow_on(&wall, &mut wall_cover, 800_000, &mut plants);
+    let mut blades = Vec::new();
+    plumb_grass(&spire, 5000, &mut blades);
+    plumb_grass(&wall, 700_000, &mut blades);
     if std::env::var("GRAV_FLORA_COUNT").is_ok() {
+        eprintln!("flora: grass {}", blades.len());
         for kind in KINDS {
             let n = plants.iter().filter(|p| p.kind == kind).count();
             eprintln!("flora: {kind:?} {n}");
@@ -680,6 +734,7 @@ pub fn grow(
         spire_cover,
         wall_cover,
         plants,
+        blades,
     }
 }
 
