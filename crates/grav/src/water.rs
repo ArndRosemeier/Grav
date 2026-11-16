@@ -7,6 +7,10 @@ use engine::prelude::*;
 
 /// Water further than this from the hero sleeps.
 const AWAKE_DISTANCE: f32 = 120.0;
+/// How long water goes on moving after the last thing stirred it, and how
+/// far beyond the basin's rim the hero counts as stirring it.
+const SETTLE_SECONDS: f32 = 6.0;
+const SETTLE_MARGIN: f32 = 3.0;
 
 /// A body of simulated water in a basin of the rock.
 pub struct Basin {
@@ -18,6 +22,8 @@ pub struct Basin {
 
 pub struct Waters {
     pub pool: Basin,
+    /// Seconds since something last stirred the pool.
+    calm: f32,
 }
 
 /// The town's spring: its basin is a hollow in the spire's own rock
@@ -60,14 +66,34 @@ pub fn build(world: &mut World) -> EngineResult<Waters> {
     // The spring basin in the town, a little to the side of where the
     // hero starts.
     let pool = build_spring(world)?;
-    Ok(Waters { pool })
+    Ok(Waters { pool, calm: 0.0 })
 }
 
 impl Waters {
-    /// Wake water near the hero, put far water to sleep.
-    pub fn update(&self, world: &mut World, hero_at: Vec3) -> EngineResult<()> {
-        let near = self.pool.at.distance(hero_at) < AWAKE_DISTANCE;
-        world.set_fluid_awake(self.pool.fluid, near)
+    /// Water is simulated while something stirs it and for a while
+    /// after, until it has come to rest: the hero at its edge or in it,
+    /// or an open stone whose field reaches it. Still water sleeps (the
+    /// simulation is the most costly thing in a frame: about 9 ms on
+    /// Arnd's desktop, measured 2026-11-16).
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        hero_at: Vec3,
+        field: &grav_core::Field,
+        dt: f32,
+    ) -> EngineResult<()> {
+        let reach = crate::rock::SPRING_BASIN_RADIUS + SETTLE_MARGIN;
+        let at = self.pool.at;
+        let stirred = at.distance(hero_at) < reach
+            || field
+                .sources
+                .iter()
+                .any(|s| s.opening > 0.0 && s.position.distance(at) < s.radius + reach);
+        self.calm = if stirred { 0.0 } else { self.calm + dt };
+        let awake = at.distance(hero_at) < AWAKE_DISTANCE
+            && self.calm < SETTLE_SECONDS
+            && std::env::var("GRAV_WATER_ASLEEP").is_err();
+        world.set_fluid_awake(self.pool.fluid, awake)
     }
 
     pub fn volume(&self, world: &World) -> f32 {

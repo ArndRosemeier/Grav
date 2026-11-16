@@ -261,7 +261,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.town
         .update(world, &mut g.response, &field, &g.base, &g.tuning)?;
     g.response.step(world, &field, feet, dt)?;
-    g.waters.update(world, feet)?;
+    g.waters.update(world, feet, &field, dt)?;
 
     // --- Field visuals ---
     g.visuals.dust(world, &field, head, dt)?;
