@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 grav-core = { path = "../grav-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
 # The hero's body (an Actors dwarf). Its packs are not in the repo:
 # `python tools/get_packs.py` puts them in assets/packs.

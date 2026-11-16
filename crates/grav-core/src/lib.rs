@@ -54,5 +54,12 @@ pub fn upright(up: Vec3, toward: Vec3) -> Quat {
     facing(up, along_ground(toward, up))
 }
 
-/// 1 g in m/s². Pull strengths in the design are given in g.
-pub const G: f32 = 9.81;
+/// What "1 g" means in this world, in m/s². Pull strengths in the design
+/// are given in g, and every pull, press and fall scales with this. It is
+/// half of Earth's (Arnd, 2026-11-16: walking felt too heavy); change it
+/// here and only here.
+pub const G: f32 = EARTH_G * 0.5;
+
+/// Earth's gravity, m/s²: what bodies are built for. The hero's legs push
+/// off as hard as on Earth, so in a lighter g he jumps higher.
+pub const EARTH_G: f32 = 9.81;

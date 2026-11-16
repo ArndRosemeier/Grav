@@ -23,8 +23,10 @@ pub struct Movement {
     pub drift_below_g: f32,
     /// Constant walk speed, m/s (P6).
     pub walk_speed: f32,
-    /// Jump height at 1 g, metres (P6): sets the constant jump impulse.
-    pub jump_height_at_1g: f32,
+    /// Jump height under Earth's gravity, metres (P6): sets the constant
+    /// jump impulse, so he jumps 1 / pull as high (twice this at 1 g, which
+    /// is half of Earth's: see `G`).
+    pub jump_height_on_earth: f32,
     /// Impact speed below which a fall does no harm, m/s (P7).
     pub safe_impact: f32,
     /// Impact speed that kills, m/s (P7).
@@ -74,7 +76,7 @@ impl Default for Movement {
             climb_slope_max_deg: 72.0,
             drift_below_g: 0.05,
             walk_speed: 3.6,
-            jump_height_at_1g: 1.2,
+            jump_height_on_earth: 1.2,
             safe_impact: 8.0,
             lethal_impact: 22.0,
             turn_deg_per_s: 90.0,
@@ -96,10 +98,10 @@ impl Default for Movement {
     }
 }
 
-/// P6: the constant jump speed that reaches `height_at_1g` under 1 g, so
-/// the height scales with 1 / pull.
+/// P6: the constant jump speed that reaches `jump_height_on_earth` under
+/// Earth's gravity, so the height scales with 1 / pull.
 pub fn jump_speed(m: &Movement) -> f32 {
-    (2.0 * m.jump_height_at_1g * G).sqrt()
+    (2.0 * m.jump_height_on_earth * crate::EARTH_G).sqrt()
 }
 
 /// P7: damage as a share of full health (1 = lethal) for an impact speed.
@@ -203,9 +205,11 @@ mod tests {
         let m = Movement::default();
         let v = jump_speed(&m);
         let h = |g: f32| v * v / (2.0 * g * G);
-        assert!((h(1.0) - 1.2).abs() < 1e-4);
-        assert!((h(0.4) - 3.0).abs() < 1e-3);
-        assert!((h(1.8) - 0.667).abs() < 0.01);
+        // 1.2 m on Earth; 1 g here is half of that.
+        let at_1g = 1.2 * crate::EARTH_G / G;
+        assert!((h(1.0) - at_1g).abs() < 1e-3);
+        assert!((h(0.4) - at_1g / 0.4).abs() < 1e-2);
+        assert!((h(2.0) - at_1g / 2.0).abs() < 1e-3);
     }
 
     #[test]
@@ -260,14 +264,15 @@ mod tests {
         );
         // On 60 degrees he slides down (the slope falls towards -x).
         let mut v = Vec3::ZERO;
-        for _ in 0..30 {
+        for _ in 0..60 {
             v = slide_step(&m, down, slope(60.0), v, dt);
         }
         assert!(v.x < -0.5 && v.length() > 1.0, "{v}");
-        // Out onto level rock at 5 m/s: stopped within a second, and a
-        // shallow dip never keeps him rocking.
+        // Out onto level rock at 5 m/s: stopped within a second and a
+        // half (at 1 g, half of Earth's), and a shallow dip never keeps
+        // him rocking.
         let mut v = Vec3::X * 5.0;
-        for _ in 0..60 {
+        for _ in 0..90 {
             v = slide_step(&m, down, Vec3::Y, v, dt);
         }
         assert_eq!(v, Vec3::ZERO);

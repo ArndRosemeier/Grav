@@ -22,6 +22,7 @@ mod people;
 mod pieces;
 mod response;
 mod rock;
+mod settings;
 mod settle;
 mod shots;
 mod sky;
@@ -53,6 +54,8 @@ struct Game {
     goods: goods::Goods,
     people: people::People,
     hero: Hero,
+    /// The player's settings and their window.
+    settings: settings::SettingsUi,
     /// The field's parts at the hero's middle, for the HUD.
     pull: FieldParts,
     boxes: Boxes,
@@ -108,8 +111,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let built = space::Built::default();
     let (at, _) = space::spire_frame(0.0, -75.0);
     let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y, &tuning.movement)?;
-    if let Some((body, height)) = dwarf::spawn(world) {
-        hero.set_animated_body(world, body, height);
+    if let Some(body) = dwarf::spawn(world) {
+        hero.set_animated_body(world, body);
     }
     let boxes = Boxes::new(world, &tuning)?;
     let response = Response::new(world, built);
@@ -133,6 +136,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         goods,
         people: people::People::new(look.unseen, movement),
         hero,
+        settings: settings::SettingsUi::load(world),
         pull: FieldParts::default(),
         boxes,
         range_held: 0.0,
@@ -180,9 +184,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         sprint: input.down(Key::Shift),
     };
     if input.mouse_down(MouseButton::Right) {
-        let (yaw, pitch) = input.look_delta(0.15);
+        let (yaw, pitch) = input.look_delta(g.settings.prefs.look_speed);
         keys.turn -= yaw;
-        keys.pitch = pitch;
+        keys.pitch = if g.settings.prefs.invert_look {
+            -pitch
+        } else {
+            pitch
+        };
     }
     // --- Boxes ---
     for (k, key) in [
@@ -223,7 +231,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         .cast_ray_ignoring(eye, ray, 120.0, hero_id)
         .map_or(eye + ray * 120.0, |h| h.point);
     let aim_dir = (aim_point - hand_now).normalize_or(g.hero.heading);
-    let over_ui = frame.ui.ctx().is_pointer_over_area() || g.boxes.bench;
+    let over_ui = frame.ui.ctx().is_pointer_over_area() || g.boxes.bench || g.settings.open;
     let ready_to_throw = g.boxes.out && !g.boxes.bench;
     // + and - change the range (holding keeps changing it).
     let (step, rate) = (g.tuning.flight.range_step, g.tuning.flight.range_rate);
@@ -403,6 +411,7 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
         100.0,
         rgb(200, 60, 60),
     );
+    g.settings.show(ui, world);
     let pull = g.pull.total();
     let state = if g.hero.drifting {
         "drifting"
@@ -415,6 +424,31 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
     } else {
         "falling"
     };
+    if g.settings.prefs.show_pull {
+        pull_readout(g, ui, pull, state);
+    }
+    if let Some((m, _)) = &g.boxes.message {
+        ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
+    }
+    let feet = g.hero.feet(world);
+    let ctx = frame.ui.ctx();
+    g.boxes.belt(ctx, feet);
+    g.boxes
+        .countdowns(ctx, world, frame.width as f32, frame.height as f32);
+    g.boxes.bench_window(ctx);
+    g.boxes.throw_hint(ctx);
+    if g.settings.prefs.show_controls {
+        ui.text_styled(
+            Anchor::BottomLeft,
+            "WASD walk  Shift sprint  Q/E turn  RMB drag look  1-9 box  +/- range  click throw  Tab bench  R sense",
+            13.0,
+            rgb(200, 200, 200),
+        );
+    }
+}
+
+/// The pull on the hero: how strong, from what, and how slanted.
+fn pull_readout(g: &Game, ui: &UiFrame, pull: Vec3, state: &str) {
     ui.text(
         Anchor::TopRight,
         format!("Pull {:.2} g, {state}", pull.length() / G),
@@ -439,22 +473,6 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
             small,
         );
     }
-    if let Some((m, _)) = &g.boxes.message {
-        ui.text_styled(Anchor::Center, m, 18.0, rgb(255, 220, 160));
-    }
-    let feet = g.hero.feet(world);
-    let ctx = frame.ui.ctx();
-    g.boxes.belt(ctx, feet);
-    g.boxes
-        .countdowns(ctx, world, frame.width as f32, frame.height as f32);
-    g.boxes.bench_window(ctx);
-    g.boxes.throw_hint(ctx);
-    ui.text_styled(
-        Anchor::BottomLeft,
-        "WASD walk  Shift sprint  Q/E turn  RMB drag look  1-9 box  +/- range  click throw  Tab bench  R sense",
-        13.0,
-        rgb(200, 200, 200),
-    );
 }
 
 fn run_demo(

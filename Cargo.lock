@@ -747,7 +747,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#2e23e2f5837fa6de1241e6b51672646df4210a67"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#f75a57cc1076187fc441b64b97f7fa2bbf3fe2f8"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1146,6 +1146,8 @@ dependencies = [
  "actors-human",
  "engine",
  "grav-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

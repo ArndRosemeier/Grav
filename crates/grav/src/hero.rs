@@ -9,17 +9,15 @@ use grav_core::{
     Movement, G,
 };
 
-/// The ground speed the Actors gait clips are made for (a 1.75 m person), m/s.
-const WALK_CLIP_SPEED: f32 = 1.4;
-const RUN_CLIP_SPEED: f32 = 4.5;
-
 pub struct Hero {
     pub id: EntityId,
     body: EntityId,
     /// The clip the body plays, when it is an animated dwarf.
     clip: Option<&'static str>,
     /// How fast the legs carry this body compared with a 1.75 m person.
-    leg_scale: f32,
+    /// His paces (walk, jog, sprint) and how fast each clip carries him,
+    /// measured from the clips themselves (Engine's ground_speed).
+    paces: Vec<(&'static str, f32)>,
     /// Facing, kept across the hero's up as down turns.
     pub heading: Vec3,
     /// Where the body faces: it turns to the direction he walks in.
@@ -49,6 +47,9 @@ pub struct Hero {
     last_pull: Vec3,
     /// Seconds of stumbling left (P12).
     pub stumble: f32,
+    /// Where his middle was last frame (feet, middle), to catch him
+    /// slipping through rock.
+    last_safe: Option<(Vec3, Vec3)>,
 }
 
 /// Inputs the hero reads this frame (from keys, or from the demo script).
@@ -94,7 +95,7 @@ impl Hero {
             id,
             body,
             clip: None,
-            leg_scale: 1.0,
+            paces: Vec::new(),
             heading,
             facing: heading,
             cam_up: up,
@@ -112,13 +113,21 @@ impl Hero {
             calm_pull: None,
             last_pull: Vec3::ZERO,
             stumble: 0.0,
+            last_safe: None,
         })
     }
 
     /// Draw the hero as an animated model (the Actors dwarf) instead of
     /// the block figure.
-    pub fn set_animated_body(&mut self, world: &mut World, body: EntityId, height: f32) {
-        self.leg_scale = (height / 1.75).clamp(0.5, 1.5);
+    pub fn set_animated_body(&mut self, world: &mut World, body: EntityId) {
+        self.paces = ["walk", "jog", "sprint"]
+            .into_iter()
+            .filter_map(|clip| {
+                let speed = world.animation_ground_speed(body, clip).ok()??;
+                (speed > 0.1).then_some((clip, speed))
+            })
+            .collect();
+        self.paces.sort_by(|a, b| a.1.total_cmp(&b.1));
         world.despawn(self.body);
         self.body = body;
         self.clip = Some("idle");
@@ -165,7 +174,29 @@ impl Hero {
         m: &Movement,
         dt: f32,
     ) -> EngineResult<()> {
+        // Rock is solid: if his middle passed through a surface since the
+        // last frame (squeezed through a crease under a strong pull), he
+        // goes back to where he was. A jump of metres is a teleport.
         let s = self.state(world);
+        let feet_now = self.feet(world);
+        let middle = feet_now + s.up.normalize_or(Vec3::Y) * 0.7;
+        if let Some((feet_then, then)) = self.last_safe {
+            let way = middle - then;
+            let len = way.length();
+            let crossed = len > 1e-3
+                && len < 3.0
+                && world
+                    .cast_ray_ignoring(then, way / len, len, self.id)
+                    .is_some();
+            if crossed {
+                world.set_place(self.id, Place::new(feet_then.x, feet_then.y, feet_then.z))?;
+                self.walk_v = Vec3::ZERO;
+                self.slide = Vec3::ZERO;
+                world.report("hero_kept_out_of_rock", 1.0);
+                return Ok(());
+            }
+        }
+        self.last_safe = Some((feet_now, middle));
         let up = self.up_or(world, Vec3::Y);
         // P3: the camera's up follows the body's, smoothed over ~0.5 s.
         let k = 1.0 - (-dt * 3.0 / m.camera_smoothing.max(0.05)).exp();
@@ -302,22 +333,27 @@ impl Hero {
             } else {
                 0.0
             };
-            let (want, clip_speed) = if speed < 0.25 {
-                ("idle", 0.0)
-            } else if speed < WALK_CLIP_SPEED * 1.5 * self.leg_scale {
-                ("walk", WALK_CLIP_SPEED)
-            } else {
-                ("run", RUN_CLIP_SPEED)
+            // The pace whose clip is nearest his speed (by ratio), played
+            // at speed / its ground speed so each step covers the ground
+            // it should.
+            let pace = self
+                .paces
+                .iter()
+                .min_by(|a, b| {
+                    let off = |p: &(&str, f32)| (speed / p.1).ln().abs();
+                    off(a).total_cmp(&off(b))
+                })
+                .copied();
+            let (want, clip_speed) = match pace {
+                Some(p) if speed >= 0.25 => p,
+                _ => ("idle", 0.0),
             };
             if want != clip {
-                // A pack without a run clip walks faster instead.
-                if world.play_animation(self.body, want).is_err() {
-                    world.play_animation(self.body, "walk")?;
-                }
+                world.play_animation(self.body, want)?;
                 self.clip = Some(want);
             }
             let rate = if clip_speed > 0.0 {
-                (speed / (clip_speed * self.leg_scale)).clamp(0.4, 2.0)
+                (speed / clip_speed).clamp(0.3, 3.0)
             } else {
                 1.0
             };

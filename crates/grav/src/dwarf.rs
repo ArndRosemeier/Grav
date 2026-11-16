@@ -13,13 +13,16 @@ fn packs_dir() -> String {
     std::env::var("GRAV_PACKS").unwrap_or_else(|_| "assets/packs".into())
 }
 
+/// The hero's clips: standing, his three paces, and the air.
+const CLIPS: [&str; 5] = ["idle", "walk", "jog", "sprint", "jump"];
+
 /// The same dwarf every run (the seed picks face, beard and clothes).
 const SEED: u32 = 11;
 
 /// Spawn the dwarf (hidden until the hero places it), playing "idle".
-/// Returns the body and its standing height. `None` when the packs are
+/// Returns the body. `None` when the packs are
 /// missing or fail to load (said on stderr).
-pub fn spawn(world: &mut World) -> Option<(EntityId, f32)> {
+pub fn spawn(world: &mut World) -> Option<EntityId> {
     let dir = packs_dir();
     if !Path::new(&dir).join("human/manifest.json").exists() {
         eprintln!(
@@ -36,7 +39,7 @@ pub fn spawn(world: &mut World) -> Option<(EntityId, f32)> {
     }
 }
 
-fn build(world: &mut World, dir: &str) -> Result<(EntityId, f32), String> {
+fn build(world: &mut World, dir: &str) -> Result<EntityId, String> {
     let mut builder = CharacterBuilder::load(dir).map_err(|e| e.to_string())?;
     if let Some(allow) = AllowOptions::preset("fantasy") {
         builder.allow(&allow);
@@ -48,15 +51,16 @@ fn build(world: &mut World, dir: &str) -> Result<(EntityId, f32), String> {
         ..Default::default()
     };
     let config = builder.random(SEED, &options);
-    let character = builder
-        .build(&config, &BuildOptions::default())
-        .map_err(|e| e.to_string())?;
-    let height = character.height;
+    let build = BuildOptions {
+        clips: CLIPS.iter().map(|c| c.to_string()).collect(),
+        ..Default::default()
+    };
+    let character = builder.build(&config, &build).map_err(|e| e.to_string())?;
     let id = world
         .spawn_animated(character.model, Place::new(0.0, -9999.0, 0.0))
         .map_err(|e| e.to_string())?;
     world
         .play_animation(id, "idle")
         .map_err(|e| e.to_string())?;
-    Ok((id, height))
+    Ok(id)
 }

@@ -1319,7 +1319,7 @@ mod tests {
             };
             let at = (pair[0] + pair[1]) * 0.5 + up;
             let pull = field.acceleration(&grav_core::BodyQuery::at(at));
-            assert!(pull.length() > 5.0, "no pull at {at}");
+            assert!(pull.length() > 0.5 * grav_core::G, "no pull at {at}");
             let lean = pull.normalize().dot(along).abs().asin().to_degrees();
             worst = worst.max(lean);
             assert!(lean < 12.0, "the pull leans {lean} degrees at {at}");
