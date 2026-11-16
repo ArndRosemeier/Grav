@@ -9,13 +9,21 @@ use grav_core::{
     Movement, G,
 };
 
+/// The ground speed the Actors gait clips are made for (a 1.75 m person), m/s.
+const WALK_CLIP_SPEED: f32 = 1.4;
+const RUN_CLIP_SPEED: f32 = 4.5;
+
 pub struct Hero {
     pub id: EntityId,
     body: EntityId,
     /// The clip the body plays, when it is an animated dwarf.
     clip: Option<&'static str>,
+    /// How fast the legs carry this body compared with a 1.75 m person.
+    leg_scale: f32,
     /// Facing, kept across the hero's up as down turns.
     pub heading: Vec3,
+    /// Where the body faces: it turns to the direction he walks in.
+    facing: Vec3,
     /// The camera's up, smoothed towards the body's up (P3).
     pub cam_up: Vec3,
     /// How far the camera looks up (down when negative), degrees.
@@ -83,7 +91,9 @@ impl Hero {
             id,
             body,
             clip: None,
+            leg_scale: 1.0,
             heading,
+            facing: heading,
             cam_up: up,
             look_pitch: 0.0,
             health: 100.0,
@@ -102,7 +112,8 @@ impl Hero {
 
     /// Draw the hero as an animated model (the Actors dwarf) instead of
     /// the block figure.
-    pub fn set_animated_body(&mut self, world: &mut World, body: EntityId) {
+    pub fn set_animated_body(&mut self, world: &mut World, body: EntityId, height: f32) {
+        self.leg_scale = (height / 1.75).clamp(0.5, 1.5);
         world.despawn(self.body);
         self.body = body;
         self.clip = Some("idle");
@@ -262,21 +273,48 @@ impl Hero {
         if !s.grounded {
             self.last_fall = s.fall;
         }
-        // The body stands along its own up and faces the heading.
-        let z =
-            (self.heading - up * self.heading.dot(up)).normalize_or(up.any_orthonormal_vector());
+        // The body stands along its own up and turns to where he walks
+        // (the camera keeps the heading), so the legs agree with the motion.
+        let across = |v: Vec3| v - up * v.dot(up);
+        let moving = across(self.walk_v);
+        let want = if moving.length() > 0.3 {
+            moving.normalize()
+        } else {
+            across(self.facing).normalize_or(across(self.heading).normalize_or_zero())
+        };
+        let from = across(self.facing).normalize_or(want);
+        let angle = from.angle_between(want);
+        let step = (540.0f32.to_radians() * dt).min(angle);
+        self.facing = if angle > 1e-4 {
+            // Turn about up, the short way round.
+            let sign = if from.cross(want).dot(up) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            Quat::from_axis_angle(up, sign * step) * from
+        } else {
+            want
+        };
+        let z = across(self.facing).normalize_or(up.any_orthonormal_vector());
         let x = up.cross(z);
         let rot = Quat::from_mat3(&Mat3::from_cols(x, up, z));
         world.set_place(self.body, place(feet, rot))?;
         if let Some(clip) = self.clip {
-            // Idle, walk or run by the speed across the surface.
-            let speed = (s.velocity - up * s.velocity.dot(up)).length();
-            let want = if !s.grounded || speed < 0.4 {
-                "idle"
-            } else if speed < 3.5 {
-                "walk"
+            // The legs show his own walking, not a slide: idle, walk or
+            // run by the speed he walks at, played as fast as he moves so
+            // the feet do not skate.
+            let speed = if s.grounded {
+                self.walk_v.length()
             } else {
-                "run"
+                0.0
+            };
+            let (want, clip_speed) = if speed < 0.25 {
+                ("idle", 0.0)
+            } else if speed < WALK_CLIP_SPEED * 1.5 * self.leg_scale {
+                ("walk", WALK_CLIP_SPEED)
+            } else {
+                ("run", RUN_CLIP_SPEED)
             };
             if want != clip {
                 // A pack without a run clip walks faster instead.
@@ -285,6 +323,12 @@ impl Hero {
                 }
                 self.clip = Some(want);
             }
+            let rate = if clip_speed > 0.0 {
+                (speed / (clip_speed * self.leg_scale)).clamp(0.4, 2.0)
+            } else {
+                1.0
+            };
+            world.set_animation_speed(self.body, rate)?;
         }
         // The camera circles the head: behind him, raised or lowered by the
         // look pitch, pulled in where rock is in the way.

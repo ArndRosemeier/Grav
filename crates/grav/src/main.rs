@@ -85,8 +85,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let built = space::Built::default();
     let (at, _) = space::spire_frame(0.0, -75.0);
     let mut hero = Hero::spawn(world, at + Vec3::Y * 0.1, Vec3::Y, &tuning.movement)?;
-    if let Some(body) = dwarf::spawn(world) {
-        hero.set_animated_body(world, body);
+    if let Some((body, height)) = dwarf::spawn(world) {
+        hero.set_animated_body(world, body, height);
     }
     let inv = Inventory::new(world, &tuning)?;
     let response = Response::new(world, built);
