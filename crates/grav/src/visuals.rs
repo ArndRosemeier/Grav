@@ -2,7 +2,7 @@
 //! "stone sense" view of field arrows (held on a key), and the arrow that
 //! shows which way the hero would fall (placing preview).
 
-use crate::space::place;
+use crate::space::{hidden, place};
 use engine::prelude::*;
 use grav_core::{BodyQuery, Field, G};
 
@@ -23,10 +23,6 @@ pub struct Visuals {
 fn next(seed: &mut u32) -> f32 {
     *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
     (*seed >> 8) as f32 / (1u32 << 24) as f32
-}
-
-fn hidden() -> Place {
-    Place::new(0.0, -9999.0, 0.0).with_scale(0.001)
 }
 
 /// An arrow along +z, 1 m long, from the origin.

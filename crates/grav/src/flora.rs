@@ -28,6 +28,7 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::f32::consts::TAU;
 
+/// Smoothstep: 0 at or below `a`, 1 at or above `b`, an S-curve between.
 pub(crate) fn smooth(a: f32, b: f32, x: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -749,6 +750,11 @@ pub fn landmarks() -> &'static [Mark] {
 
 // ---------------------------------------------------------------------
 // The plants' shapes.
+
+/// A level of detail of 3 is the plain solid, for collision.
+pub(crate) fn solid(detail: u32) -> bool {
+    detail >= 3
+}
 
 /// A shape being built: points with normal, colour, glow.
 pub(crate) struct Form {

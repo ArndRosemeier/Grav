@@ -15,7 +15,7 @@
 //! Each building is made once per shape, at three levels of detail and as
 //! a plain solid for collision, and drawn wherever one stands.
 
-use crate::flora::{arc, fine, hash, smooth, Form, Stand, Stuff};
+use crate::flora::{arc, fine, hash, smooth, solid, Form, Stand, Stuff};
 use crate::pieces::{shatter, Cells, Hold, Shard};
 use crate::rock::{self, Rock, Waters};
 use crate::space;
@@ -365,11 +365,6 @@ pub(crate) const PANE: f32 = 5.0;
 pub(crate) const CLOTH: f32 = 6.0;
 
 const UP: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
-
-/// A level of detail of 3 is the plain solid, for collision.
-fn solid(detail: u32) -> bool {
-    detail >= 3
-}
 
 /// A window: a lit pane with a point at the top, set on a wall at
 /// `center` facing `out`, in a frame.

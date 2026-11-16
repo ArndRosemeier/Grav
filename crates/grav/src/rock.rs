@@ -15,6 +15,7 @@
 //!
 //! Meshes are built on worker threads and handed over ready to spawn.
 
+use crate::flora::smooth;
 use crate::flora::Growth;
 use crate::space::{self, ISLAND_CENTER, ISLAND_RADIUS, SPIRE_END, SPIRE_RADIUS, WALL_Z};
 use crate::wet::{Ground, Water};
@@ -27,11 +28,6 @@ use std::sync::Arc;
 pub const SPIRE_TIP: f32 = SPIRE_END + 62.0;
 /// Half the side of the outer wall that is built around the spire.
 pub const WALL_HALF: f32 = 900.0;
-
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
 
 /// Where the spire's rows stop running along the axis and start following
 /// the flare into the wall. The flare begins a little below this.

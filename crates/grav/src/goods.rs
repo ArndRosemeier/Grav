@@ -5,16 +5,11 @@
 //! field reaches them. Then each becomes a body of its own that follows
 //! the pull, and stays one.
 
-use crate::flora::{fine, hash, Form};
+use crate::flora::{fine, hash, solid, Form};
 use crate::settle::{CLOTH, FOAM, IRON, LATTICE, PANE, WOOD};
 use engine::prelude::*;
 use grav_core::Field;
 use std::f32::consts::{PI, TAU};
-
-/// A level of detail of 3 is the plain solid, for collision.
-fn solid(detail: u32) -> bool {
-    detail >= 3
-}
 
 /// A hoop or band round the y axis at height `y`: `r` its inner radius.
 fn band(

@@ -11,6 +11,7 @@
 //! is. The rock's material, the drawn water, and later the vegetation and
 //! the settlements all read it.
 
+use crate::flora::smooth;
 use engine::prelude::*;
 use engine::proc::Noise;
 use std::cmp::Reverse;
@@ -29,11 +30,6 @@ const DRYING: f32 = 15.0;
 /// shows, and at which it is a full stream.
 pub const TRICKLE: f32 = 220.0;
 pub const STREAM: f32 = 2600.0;
-
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
 
 /// A grid of points on the rock, with what the water needs to know of each.
 pub struct Ground {

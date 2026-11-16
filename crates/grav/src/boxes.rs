@@ -7,7 +7,7 @@
 //! bares a little plain mass: the box comes down and the hero picks it up
 //! where it lies.
 
-use crate::space::place;
+use crate::space::{hidden, place};
 use engine::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Sense, Stroke, StrokeKind};
 use engine::glam::Mat3;
 use engine::prelude::*;
@@ -22,10 +22,6 @@ const FAN_REACH: f32 = 1.1;
 /// Thickness of the box's frame bars and of its lids, m.
 const BAR: f32 = 0.035;
 const LID: f32 = 0.018;
-
-fn hidden() -> Place {
-    Place::new(0.0, -9999.0, 0.0).with_scale(0.001)
-}
 
 /// The reserved charge colours (L1): amber pulls, blue pushes.
 pub fn charge_color(c: Charge) -> Color {

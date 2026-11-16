@@ -98,6 +98,11 @@ pub fn base_field() -> Field {
     }
 }
 
+/// Where a thing that is not shown right now is parked: far below, tiny.
+pub fn hidden() -> Place {
+    Place::new(0.0, -9999.0, 0.0).with_scale(0.001)
+}
+
 /// A place from a position and a rotation.
 pub fn place(at: Vec3, rot: Quat) -> Place {
     let (yaw, pitch, roll) = rot.to_euler(EulerRot::YXZ);

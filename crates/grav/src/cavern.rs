@@ -9,6 +9,7 @@
 //! worker threads. The near wall, spire and island of the test space are
 //! `rock.rs`; here the wall dips behind them and takes over at their edge.
 
+use crate::flora::smooth;
 use crate::rock;
 use crate::space::{HEART_CENTER, ISLAND_CENTER, WALL_Z};
 use engine::prelude::*;
@@ -22,11 +23,6 @@ const CLEAR_OF_HEART: f32 = 3600.0;
 pub const BEHIND_HOME_WALL: f32 = 16.0;
 /// Every last level draws out to here: past the far side of the cavern.
 const EVERYWHERE: f32 = 60_000.0;
-
-fn smooth(a: f32, b: f32, x: f32) -> f32 {
-    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
 
 fn hash(n: u32, k: u32) -> f32 {
     let mut h = n.wrapping_mul(0x9e37_79b9) ^ k.wrapping_mul(0x85eb_ca6b);
