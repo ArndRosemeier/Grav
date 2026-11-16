@@ -203,6 +203,35 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     color = color + vec3<f32>(0.05, 0.05, 0.055) * flake;
     rough = rough - 0.15 * flake;
 
+    // A road (uv.y): flags of the same stone laid close, each its own
+    // tone, their middles worn smooth by feet, the joints dark and full
+    // of metal dust that the pull has combed into them.
+    let tread = smoothstep(0.3, 0.7, m.uv.y + (gv_fbm3(p * 0.8 + 19.0) - 0.5) * 0.5);
+    if (tread > 0.01) {
+        let lay = (gv_fbm3(p * 0.6 + 77.0) - 0.5) * 0.25;
+        let flags = gv_cells(p * 0.95 + 500.0 + lay);
+        let e2 = 0.02;
+        let fx = gv_cells((p + vec3<f32>(e2, 0.0, 0.0)) * 0.95 + 500.0 + lay).y;
+        let fy = gv_cells((p + vec3<f32>(0.0, e2, 0.0)) * 0.95 + 500.0 + lay).y;
+        let fz = gv_cells((p + vec3<f32>(0.0, 0.0, e2)) * 0.95 + 500.0 + lay).y;
+        let gap = 1.0 - smoothstep(0.012, 0.05, flags.y);
+        let lip = 1.0 - smoothstep(0.0, 0.14, flags.y);
+        let worn = smoothstep(0.08, 0.32, flags.y) * (0.55 + 0.45 * gv_noise(p * 2.3 + 5.0));
+        var flag = mix(mid, warm, smoothstep(0.55, 0.9, flags.x) * 0.6) * (0.55 + 1.1 * flags.x);
+        flag = flag * (0.7 + 0.6 * mottle) * (0.88 + 0.24 * grain) * (0.7 + 0.3 * smoothstep(0.1, 0.5, h0));
+        // Worn middles are paler with dust and smoother.
+        flag = mix(flag, flag * 1.25 + vec3<f32>(0.008), worn * 0.6);
+        let filings = gap * smoothstep(0.5, 0.85, gv_noise(p * 47.0 + 3.0)) * (0.4 + 0.6 * gv_noise(p * 5.0));
+        flag = mix(flag * (1.0 - 0.8 * gap), vec3<f32>(0.2, 0.18, 0.17), filings * 0.6);
+        color = mix(color, flag, tread);
+        rough = mix(rough, mix(mix(0.9, 0.52, worn), 0.4, filings), tread);
+        metal = mix(metal, 0.85, filings * tread);
+        // The flags' edges are rounded down into the joints.
+        let fgrad = vec3<f32>(fx - flags.y, fy - flags.y, fz - flags.y) / e2;
+        let slope = (fgrad - n0 * dot(fgrad, n0)) * lip * 0.12;
+        n = normalize(mix(n, n0, tread * 0.75 * (1.0 - gap)) + slope * tread);
+    }
+
     // Metal threads combed by old fields (L8): copper, iron, a pale silvery metal.
     let province = gv_fbm3(p * 0.013 + 70.0);
     let copper = metal_threads(p, vec3<f32>(0.62, 0.31, 0.72), vec3<f32>(-0.4, 0.8, 0.45), 0.9, 0.055, warp)
@@ -215,7 +244,7 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     let metal_color = (vec3<f32>(0.86, 0.42, 0.24) * copper + vec3<f32>(0.30, 0.28, 0.27) * iron
         + vec3<f32>(0.82, 0.84, 0.88) * silver) / max(copper + iron + silver, 0.001);
     color = mix(color, metal_color, threads);
-    metal = threads;
+    metal = max(metal * (1.0 - threads), threads);
     rough = mix(rough, 0.28 + 0.2 * gv_noise(p * 6.0), threads);
     n = normalize(mix(n, n0, threads * 0.6));
 

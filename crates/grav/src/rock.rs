@@ -466,6 +466,17 @@ impl Rock {
         Self::road_distance(theta, rho).min(lane)
     }
 
+    /// How much the ground at `p` is road (1 on it, 0 beside it): on the
+    /// spire and its flare, or on the wall's dwarven lane.
+    fn tread(p: Vec3, wall: bool) -> f32 {
+        let d = if wall {
+            p.y.abs() + 40.0 * smooth(215.0, 235.0, p.x.abs())
+        } else {
+            Self::path_distance(p)
+        };
+        1.0 - smooth(1.9, 3.1, d)
+    }
+
     /// How much of the town's gentle ground applies at `z` along the spire
     /// (1 in the town, 0 in the wild rock).
     fn spire_town(z: f32) -> f32 {
@@ -846,7 +857,11 @@ fn spire_chunks(rock: &Rock, waters: &Arc<Waters>, growth: &Arc<Growth>) -> Vec<
                 let i = waters
                     .spire
                     .index((r - first) as usize, c.rem_euclid(SPIRE_AROUND) as usize);
-                [waters.spire_water.wet[i], waters.spire_water.depth[i]]
+                // What the rock's look needs: how wet, how much a road.
+                [
+                    waters.spire_water.wet[i],
+                    Rock::tread(rock.spire_grid_point(r, c), false),
+                ]
             };
             // Rows run along +z, columns around towards +x from +y, so
             // du x dv points out of the rock.
@@ -981,7 +996,10 @@ fn wall_chunks(rock: &Rock, waters: &Arc<Waters>, growth: &Arc<Growth>) -> Vec<J
                         (r.clamp(-half_steps, half_steps) + half_steps) as usize,
                         (c.clamp(-half_steps, half_steps) + half_steps) as usize,
                     );
-                    [waters.wall_water.wet[i], waters.wall_water.depth[i]]
+                    [
+                        waters.wall_water.wet[i],
+                        Rock::tread(rock.wall_grid_point(r, c), true),
+                    ]
                 };
                 let mesh = grid_mesh(r0..r1 + 1, c0..c1 + 1, &point, &uv, &cover, true)?;
                 Ok(RockPiece {
