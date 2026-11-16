@@ -128,6 +128,16 @@ impl Hero {
         world.character(self.id).unwrap_or_default()
     }
 
+    /// The body's up, or `or` while the physics has none for it yet.
+    pub fn up_or(&self, world: &World, or: Vec3) -> Vec3 {
+        let up = self.state(world).up;
+        if up.length_squared() > 0.5 {
+            up
+        } else {
+            or
+        }
+    }
+
     pub fn feet(&self, world: &World) -> Vec3 {
         world
             .world_transform(self.id)
@@ -137,12 +147,7 @@ impl Hero {
 
     /// The right hand, where a held stone is.
     pub fn hand(&self, world: &World) -> Vec3 {
-        let s = self.state(world);
-        let up = if s.up.length_squared() > 0.5 {
-            s.up
-        } else {
-            self.cam_up
-        };
+        let up = self.up_or(world, self.cam_up);
         let right = self.heading.cross(up).normalize_or_zero();
         self.feet(world) + up * 0.95 + self.heading * 0.35 + right * 0.3
     }
@@ -161,11 +166,7 @@ impl Hero {
         dt: f32,
     ) -> EngineResult<()> {
         let s = self.state(world);
-        let up = if s.up.length_squared() > 0.5 {
-            s.up
-        } else {
-            Vec3::Y
-        };
+        let up = self.up_or(world, Vec3::Y);
         // P3: the camera's up follows the body's, smoothed over ~0.5 s.
         let k = 1.0 - (-dt * 3.0 / m.camera_smoothing.max(0.05)).exp();
         self.cam_up = self.cam_up.lerp(up, k).normalize_or(up);

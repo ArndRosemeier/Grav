@@ -256,12 +256,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.boxes.tick(world, hero_id, feet, dt)?;
 
     // --- The field this frame ---
-    let up = g.hero.state(world).up;
-    let up = if up.length_squared() > 0.5 {
-        up
-    } else {
-        g.hero.cam_up
-    };
+    let up = g.hero.up_or(world, g.hero.cam_up);
     let hand = g.hero.hand(world);
     let mut field = g.base.clone();
     field.sources = g.boxes.sources();
