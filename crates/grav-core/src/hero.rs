@@ -128,14 +128,8 @@ pub fn grip(m: &Movement, accel: Vec3) -> f32 {
 /// P4: whether the field `accel` presses the hero onto a surface with
 /// normal `normal` hard enough, at a gentle enough slope, to walk.
 pub fn can_walk(m: &Movement, accel: Vec3, normal: Vec3) -> bool {
-    let strength = accel.length();
-    if strength < m.walk_min_g * G {
-        return false;
-    }
-    let down = accel / strength;
-    let press = -down.dot(normal.normalize_or_zero());
-    press * strength >= m.walk_min_g * G
-        && press >= climb_slope_deg(m, strength / G).to_radians().cos()
+    let (press, _) = press_and_drag(accel, normal);
+    press >= m.walk_min_g * G && footing_holds(grip(m, accel), accel, normal)
 }
 
 /// The pull split against a surface with normal `normal`: how hard it
