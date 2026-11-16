@@ -11,7 +11,8 @@
 //! `progress.json` next to the game.
 //!
 //! `GRAV_CHALLENGE=<id>` starts a challenge straight away, and `GRAV_MENU=1`
-//! shows the menu in a verify run (for screenshots).
+//! shows the menu in a verify run (for screenshots). `GRAV_LOAD=1` loads
+//! the saved game at the start.
 
 use crate::boxes::Boxes;
 use crate::goods::Goods;
@@ -87,6 +88,19 @@ pub struct Challenges {
     marker: Option<EntityId>,
     /// The sandbox was picked: take the goal's label away.
     leave: bool,
+    /// Save or load asked for in the menu, for the game to do.
+    pub file: Option<FileAct>,
+    /// Is there a saved game to go on with.
+    pub saved: bool,
+    /// What saving or loading said last.
+    pub file_note: Option<String>,
+}
+
+/// Saving or loading, asked for in the menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileAct {
+    Save,
+    Load,
 }
 
 /// The ground under `p` along `-up`: walked down from above until the
@@ -304,6 +318,9 @@ impl Challenges {
             pending,
             marker: None,
             leave: false,
+            file: std::env::var("GRAV_LOAD").is_ok().then_some(FileAct::Load),
+            saved: crate::save::SaveGame::exists(),
+            file_note: None,
         }
     }
 
@@ -507,6 +524,37 @@ impl Challenges {
                     self.mode = Mode::Sandbox;
                     self.before = None;
                     self.leave = true;
+                }
+                ui.horizontal(|ui| {
+                    if self.saved
+                        && ui
+                            .add_sized(
+                                [196.0, 28.0],
+                                egui::Button::new(RichText::new("Load the saved game").size(14.0)),
+                            )
+                            .clicked()
+                    {
+                        self.file = Some(FileAct::Load);
+                        self.mode = Mode::Sandbox;
+                        self.before = None;
+                        self.leave = true;
+                    }
+                    let in_sandbox = matches!(self.before, Some(Mode::Sandbox));
+                    if in_sandbox
+                        && ui
+                            .add_sized(
+                                [196.0, 28.0],
+                                egui::Button::new(RichText::new("Save this game").size(14.0)),
+                            )
+                            .clicked()
+                    {
+                        self.file = Some(FileAct::Save);
+                        self.mode = Mode::Sandbox;
+                        self.before = None;
+                    }
+                });
+                if let Some(note) = &self.file_note {
+                    ui.label(RichText::new(note).size(12.0).weak());
                 }
                 ui.add_space(8.0);
                 ui.label(RichText::new("Challenges").size(16.0).color(gold));

@@ -417,6 +417,26 @@ impl Boxes {
         Ok(())
     }
 
+    /// Put the stones back as a saved game had them: each box where its
+    /// state says (a dropped one gets its body again on the next tick).
+    pub fn restore(&mut self, world: &mut World, stones: Vec<Stone>, selected: usize, range: f32) {
+        if stones.len() != self.stones.len() {
+            self.say("The saved stones do not match this kit: kept the ones you have");
+            return;
+        }
+        for look in &mut self.looks {
+            if look.has_body {
+                world.remove_body(look.root);
+                look.has_body = false;
+            }
+            look.swing = [0.0; 6];
+        }
+        self.stones = stones;
+        self.selected = selected.min(self.stones.len().saturating_sub(1));
+        self.range = range.clamp(self.flight.min_range, self.flight.max_range);
+        self.out = false;
+    }
+
     /// The fields the boxes make now.
     pub fn sources(&self) -> Vec<Source> {
         self.stones

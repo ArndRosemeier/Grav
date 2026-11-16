@@ -23,6 +23,7 @@ mod people;
 mod pieces;
 mod response;
 mod rock;
+mod save;
 mod settings;
 mod settle;
 mod shots;
@@ -130,7 +131,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let demo = (std::env::var("ENGINE_VERIFY").is_ok()
         && tour.is_none()
         && !meter.measuring()
-        && std::env::var("GRAV_CHALLENGE").is_err())
+        && std::env::var("GRAV_CHALLENGE").is_err()
+        && std::env::var("GRAV_LOAD").is_err())
     .then(Demo::default);
     Ok(Game {
         tuning,
@@ -337,6 +339,9 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         &g.people,
         dt,
     )?;
+    if let Some(act) = g.challenges.file.take() {
+        file_act(g, world, act)?;
+    }
 
     // --- Field visuals ---
     g.visuals.dust(world, &field, head, dt)?;
@@ -404,6 +409,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         );
     }
     world.report("hero_pull_g", g.hero.pull_g);
+    world.report("hero_feet", <[f32; 3]>::from(feet));
     world.report("pieces_broken", g.response.broken_total);
     world.report("buildings_woken", g.town.woken);
     world.report("buildings_asleep_again", g.town.slept);
@@ -422,6 +428,45 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("challenges", g.challenges.count());
     world.report("weather_flare_g", g.weather.now.flare_g);
     world.check("the cavern has its sound", g.ambience.has_bed());
+    Ok(())
+}
+
+/// Save the sandbox game, or load the saved one (save.rs).
+fn file_act(g: &mut Game, world: &mut World, act: challenges::FileAct) -> EngineResult<()> {
+    let note = match act {
+        challenges::FileAct::Save => {
+            let up = g.hero.up_or(world, g.hero.cam_up);
+            let s = save::SaveGame::new(
+                g.hero.feet(world),
+                up,
+                g.hero.heading,
+                g.boxes.stones.clone(),
+                g.boxes.selected,
+                g.boxes.range,
+                g.weather.hours,
+            );
+            match s.write() {
+                Ok(()) => {
+                    g.challenges.saved = true;
+                    "Saved.".to_string()
+                }
+                Err(e) => format!("Not saved: {e}"),
+            }
+        }
+        challenges::FileAct::Load => match save::SaveGame::read() {
+            Ok(s) => {
+                let up = Vec3::from(s.up).normalize_or(Vec3::Y);
+                g.hero
+                    .put(world, Vec3::from(s.feet), up, Vec3::from(s.heading))?;
+                g.boxes.restore(world, s.stones, s.selected, s.range);
+                g.weather.hours = s.hours;
+                "Loaded. Buildings and goods are as the world made them.".to_string()
+            }
+            Err(e) => format!("Not loaded: {e}"),
+        },
+    };
+    g.boxes.say(note.clone());
+    g.challenges.file_note = Some(note);
     Ok(())
 }
 
