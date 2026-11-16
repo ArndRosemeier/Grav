@@ -14,6 +14,7 @@ code (A1, S9, W3, P6 ...) refer to it.
 | `crates/grav-core` | The rules as plain data: attraction field (veins, heart, stones; six profiles, cutoff, inner ramp, shielding, lodestone charge rules), stones in their timed boxes (one-sided fields), building bonds, the hero's body rules, and `Tuning` (every number, loadable from JSON). No engine, deterministic, so a server can own it later. |
 | `crates/grav` | The sandbox: one spire of dead stone out of the outer wall (middle band around the spire, heavy wall face, a seam at the root, a light island above the tip, void between), bonded houses, stalls and loose goods, water (a pool beside the start and a lake hanging under the island, Engine 3D fluid boxes that follow the field, stones included), the hero, the boxes (belt, bench, wind-up throw and its preview), dust and stone sense. |
 | `tools/get_packs.py` | Downloads the Actors packs (bodies, clothes, clips) into `assets/packs` (git-ignored) for the dwarf hero. |
+| `tools/dupes.py` | Looks for duplicated code with Arnd's Toolbox (functions written twice, pasted snippets); reports in `target/dupes/`. Needs Node. |
 | `tools/verify.py` | Runs the game as an Engine verify run (a scripted demo, screenshots, report) into `target/verify/grav/`. |
 
 ## Play

@@ -5,6 +5,7 @@
 - `crates/grav-core` stays engine-free and deterministic: no `engine`, no renderer, no unseeded randomness. Game code that needs the engine goes in the game crate.
 - Numbers to tune belong in `grav_core::Tuning` (JSON-loadable), not as constants in game code.
 - Engine changes go to https://github.com/ArndRosemeier/Engine (its own CI: fmt, clippy, tests, verify runs, a 0.001 version bump per change). Read its AGENTS.md before changing it.
+- One mechanic, one implementation (Arnd, 2026-11-16): duplicated mechanics drift apart when the rules change. Before adding a helper or a rule, look for an existing one; run `python tools/dupes.py` after larger changes and merge any new copy it finds.
 - Checks before pushing: `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`.
 
 ## Quality bar (Arnd, 2026-11-15; taken from HeroWorld's AGENTS.md)
