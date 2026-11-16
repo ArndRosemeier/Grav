@@ -408,9 +408,9 @@ impl Cavern {
                         // Only patches the test space can come near get the
                         // fine level.
                         let near = origin.length() < 5200.0;
-                        let mut steps = vec![(40, 7500.0, 70.0), (14, EVERYWHERE, 120.0)];
+                        let mut steps = vec![(40, 4500.0, 70.0), (14, EVERYWHERE, 120.0)];
                         if near {
-                            steps.insert(0, (128, 3200.0, 25.0));
+                            steps.insert(0, (128, 1900.0, 25.0));
                         }
                         let mut levels = Vec::new();
                         for (n, to, skirt) in steps {
@@ -565,9 +565,9 @@ impl Cavern {
             // are also lit and textured as the near rock is.
             let reach = spire.clearance(&noise, Vec3::ZERO);
             let near = reach < 1500.0;
-            let mut steps = vec![(64, 40, 8500.0), (22, 14, EVERYWHERE)];
+            let mut steps = vec![(64, 40, 5000.0), (22, 14, EVERYWHERE)];
             if reach < 5200.0 {
-                steps.insert(0, (200, 120, 3600.0));
+                steps.insert(0, (200, 120, 2800.0));
             }
             if near {
                 steps.insert(0, (420, 220, 1300.0));
@@ -667,7 +667,7 @@ impl Cavern {
                     let rock = |_: f32, _: f32, p: Vec3| -p.normalize_or_zero();
                     let mut levels = Vec::new();
                     for (rows, cols, to) in
-                        [(64, 128, 2600.0), (22, 44, 6500.0), (9, 18, EVERYWHERE)]
+                        [(64, 128, 1500.0), (22, 44, 3800.0), (9, 18, EVERYWHERE)]
                     {
                         let mesh = Surface {
                             rows,

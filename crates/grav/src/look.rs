@@ -68,6 +68,37 @@ fn gv_cells(p: vec3<f32>) -> vec2<f32> {
     }
     return vec2<f32>(own, d2 - d1);
 }
+// Three numbers in 0..1 for a lattice point, for the price of one.
+fn gv_hash3(p: vec3<f32>) -> vec3<f32> {
+    var q = fract(p * vec3<f32>(0.1031, 0.1030, 0.0973));
+    q = q + dot(q, q.yxz + 33.33);
+    return fract((q.xxy + q.yxx) * q.zyx);
+}
+// gv_cells at about a third of the cost (one hash per cell instead of
+// four), for rock that fills the far view.
+fn gv_cells_far(p: vec3<f32>) -> vec2<f32> {
+    let base = floor(p);
+    var d1 = 9.0;
+    var d2 = 9.0;
+    var own = 0.0;
+    for (var i = -1; i <= 1; i = i + 1) {
+        for (var j = -1; j <= 1; j = j + 1) {
+            for (var k = -1; k <= 1; k = k + 1) {
+                let c = base + vec3<f32>(f32(i), f32(j), f32(k));
+                let h = gv_hash3(c + 1.7);
+                let d = distance(c + h, p);
+                if (d < d1) {
+                    d2 = d1;
+                    d1 = d;
+                    own = fract(h.x * 17.3 + h.y * 5.1 + h.z * 31.7);
+                } else if (d < d2) {
+                    d2 = d;
+                }
+            }
+        }
+    }
+    return vec2<f32>(own, d2 - d1);
+}
 fn gv_fbm5(p: vec3<f32>) -> f32 {
     return gv_noise(p) * 0.5 + gv_noise(p * 2.07 + 11.3) * 0.26 + gv_noise(p * 4.21 + 27.1) * 0.13
         + gv_noise(p * 8.4 + 5.7) * 0.07 + gv_noise(p * 17.1 + 41.9) * 0.04;
@@ -440,13 +471,13 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     // Folded strata in broad bands, as on the near rock (L7, L9).
     let fold = gv_fbm3(p * 0.0013 + 7.0);
     // Broken into great blocks that have slipped against each other.
-    let blocks = gv_cells(p * vec3<f32>(0.0031, 0.0022, 0.0027) + (fold - 0.5) * 0.4);
+    let blocks = gv_cells_far(p * vec3<f32>(0.0031, 0.0022, 0.0027) + (fold - 0.5) * 0.4);
     let joint = 1.0 - smoothstep(0.0, 0.03, blocks.y);
     let layer = dot(p, vec3<f32>(0.31, 0.52, 0.80)) * 0.011 + fold * 2.2 + (blocks.x - 0.5) * 2.4
         + (gv_noise(p * 0.03) - 0.5) * 0.12;
     let band = gv_noise(vec3<f32>(layer * 2.3, 1.7, 4.2));
     let fine = gv_noise(vec3<f32>(layer * 11.0, 3.1, 0.4));
-    let mottle = gv_fbm5(p * 0.006 + 19.0);
+    let mottle = gv_fbm3(p * 0.006 + 19.0);
     var tone = 0.06 + 0.13 * band * band + 0.04 * fine + 0.09 * mottle + 0.05 * blocks.x;
     tone = tone * (1.0 - 0.5 * joint);
     // Bays lie in their own shade, buttresses stand in the light.
@@ -460,7 +491,7 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     // lines between them (flora.rs draws the near ones one by one):
     // crimson in the heart's light, violet in the shade, teal here and
     // there where it is damp; none on the joints and the barest faces.
-    let ground = gv_cells(p * 0.0075 + 500.0 + (fold - 0.5) * 0.6);
+    let ground = gv_cells_far(p * 0.0075 + 500.0 + (fold - 0.5) * 0.6);
     let patchy = smoothstep(0.4, 0.6, gv_fbm3(p * 0.0024 + 90.0)) * (0.35 + 0.65 * ground.x);
     let lit_side = smoothstep(0.1, 0.5, dot(n, l));
     var hue = mix(vec3<f32>(0.34, 0.1, 0.6), vec3<f32>(0.62, 0.05, 0.12), lit_side);
@@ -479,7 +510,7 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 
     // Lodestone veins showing through as long amber seams (L2).
     let district = smoothstep(0.5, 0.72, gv_fbm3(p * 0.0009 + 200.0));
-    let net = gv_cells(p * 0.0042 + 300.0 + (fold - 0.5) * 0.3);
+    let net = gv_cells_far(p * 0.0042 + 300.0 + (fold - 0.5) * 0.3);
     let seam = (1.0 - smoothstep(0.0, 0.03, net.y)) * smoothstep(0.4, 0.7, gv_noise(p * 0.0028 + 9.0));
     let pulse = 0.75 + 0.25 * sin(m.time * 0.4 + gv_noise(p * 0.002) * 12.0);
     emission = emission + vec3<f32>(1.0, 0.36, 0.04) * seam * district * 0.9 * pulse;

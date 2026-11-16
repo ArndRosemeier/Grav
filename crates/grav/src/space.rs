@@ -183,8 +183,22 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
         }
     }
     // The rest of the cavern: scenery in level-of-detail sets.
+    let count = std::env::var("GRAV_CAVERN_COUNT").is_ok();
+    // Triangles drawn from the hero's start, by level (a diagnostic).
+    let mut drawn = [0usize; 4];
     for piece in crate::cavern::Cavern::new().build()? {
         let near = piece.near;
+        if count {
+            let (eye, _) = spire_frame(0.0, -75.0);
+            for place in &piece.places {
+                let d = place.position.distance(eye);
+                let level = piece.levels.iter().position(|(_, to)| d < *to);
+                if let Some(level) = level {
+                    let from_coarsest = piece.levels.len() - 1 - level;
+                    drawn[from_coarsest.min(3)] += piece.levels[level].0.triangle_count();
+                }
+            }
+        }
         let set = world.spawn_lod_prepared(piece.levels)?;
         world.set_lod_places(set, &piece.places)?;
         for level in world.lod_levels(set)? {
@@ -197,6 +211,9 @@ pub fn build_rock(world: &mut World, look: &Look) -> EngineResult<Scenery> {
             world.set_casts_shadow(level, false)?;
         }
         scenery.cavern.push((set, piece.places));
+    }
+    if count {
+        eprintln!("cavern triangles from the start, coarsest level first: {drawn:?}");
     }
     Ok(scenery)
 }
