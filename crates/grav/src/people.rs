@@ -144,6 +144,9 @@ pub struct People {
     pub taken: usize,
     /// How many a pull has carried away for good.
     pub lost: usize,
+    /// How many a pull has ever taken off their feet (challenges count
+    /// them as harmed, F6).
+    pub swept: usize,
     unseen: CustomMaterialId,
 }
 
@@ -187,6 +190,7 @@ impl Movable for People {
                 .density(1.0)
                 .ccd(true),
         )?;
+        self.swept += 1;
         p.loose = Some(Loose {
             body: Some(body),
             at: p.at,
@@ -270,6 +274,7 @@ impl People {
             fleeing: 0,
             taken: 0,
             lost: 0,
+            swept: 0,
             unseen,
         }
     }

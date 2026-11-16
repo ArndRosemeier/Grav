@@ -10,6 +10,7 @@
 //! [`Tuning`], loaded from JSON, never as constants in game code.
 
 pub mod bonds;
+pub mod challenge;
 pub mod field;
 pub mod hero;
 pub mod profile;
@@ -20,6 +21,7 @@ pub mod vein;
 pub mod weather;
 
 pub use bonds::{BondClass, PieceId, PieceStage, Structure, StructureStep};
+pub use challenge::{Attempt, Challenge, Collateral, Objective, Observed, Outcome, Score};
 pub use field::{BodyQuery, Field, FieldParts, Heart, LodestoneBody};
 pub use hero::{
     can_walk, climb_slope_deg, fall_damage, footing_holds, grip, jump_speed, press_and_drag,

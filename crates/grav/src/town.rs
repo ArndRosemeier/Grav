@@ -76,6 +76,38 @@ impl Town {
         }
     }
 
+    /// The building standing at `p` (within a metre): its kind and place.
+    pub fn building_at(&self, p: Vec3) -> Option<(usize, usize)> {
+        self.kinds.iter().enumerate().find_map(|(k, kind)| {
+            kind.places
+                .iter()
+                .position(|q| q.position.distance(p) < 1.0)
+                .map(|i| (k, i))
+        })
+    }
+
+    /// Where building `i` of kind `k` stands.
+    pub fn place_of(&self, k: usize, i: usize) -> Option<Vec3> {
+        Some(self.kinds.get(k)?.places.get(i)?.position)
+    }
+
+    /// How many pieces building `b` has, and how many of them broke.
+    pub fn broken_in(&self, response: &Response, b: (usize, usize)) -> (usize, usize) {
+        let total = self.kinds[b.0].shards.len();
+        let broken = self
+            .standing
+            .iter()
+            .find(|w| (w.kind, w.place) == b)
+            .map_or(0, |w| {
+                response.built.structures[w.structure]
+                    .pieces
+                    .iter()
+                    .filter(|p| p.stage == grav_core::PieceStage::Broken)
+                    .count()
+            });
+        (total, broken)
+    }
+
     /// How many buildings stand, and how many pieces they have in all.
     pub fn count(&self) -> (usize, usize) {
         let buildings = self.kinds.iter().map(|k| k.places.len()).sum();

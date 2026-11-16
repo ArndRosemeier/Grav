@@ -325,6 +325,8 @@ pub struct Goods {
     changed: Vec<bool>,
     material: CustomMaterialId,
     pub loose_total: usize,
+    /// The body of each that came loose (by its place in `index`).
+    bodies: Vec<Option<EntityId>>,
 }
 
 impl Goods {
@@ -342,7 +344,38 @@ impl Goods {
             index,
             material,
             loose_total: 0,
+            bodies: Vec::new(),
         }
+        .sized()
+    }
+
+    fn sized(mut self) -> Self {
+        self.bodies = vec![None; self.index.len()];
+        self
+    }
+
+    /// The goods standing at `p` (within half a metre).
+    pub fn item_at(&self, p: Vec3) -> Option<usize> {
+        self.index
+            .iter()
+            .position(|&(k, n)| self.kinds[k].places[n].position.distance(p) < 0.5)
+    }
+
+    /// Where goods `i` are now: where they stand, or where their body is.
+    pub fn where_is(&self, world: &World, i: usize) -> Option<Vec3> {
+        let (k, n) = *self.index.get(i)?;
+        match self.bodies[i] {
+            Some(body) => world
+                .world_transform(body)
+                .ok()
+                .map(|m| m.w_axis.truncate()),
+            None => Some(self.kinds[k].places[n].position),
+        }
+    }
+
+    /// Have goods `i` come loose.
+    pub fn is_loose(&self, i: usize) -> bool {
+        self.bodies.get(i).is_some_and(|b| b.is_some())
     }
 }
 
@@ -371,6 +404,7 @@ impl Movable for Goods {
             world.despawn(solid);
         }
         let id = world.spawn(self.kinds[k].mesh.clone());
+        self.bodies[i] = Some(id);
         world.set_place(id, self.kinds[k].places[n])?;
         world.set_custom_material(id, self.material)?;
         movable::loose_body(world, id, 0.6)

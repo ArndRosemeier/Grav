@@ -8,6 +8,7 @@
 mod ambience;
 mod boxes;
 mod cavern;
+mod challenges;
 mod dwarf;
 mod flora;
 mod goods;
@@ -66,6 +67,7 @@ struct Game {
     waters: water::Waters,
     ambience: ambience::Ambience,
     weather: sky::HeartWeather,
+    challenges: challenges::Challenges,
     look: look::Look,
     tour: Option<shots::Tour>,
     demo: Option<Demo>,
@@ -120,12 +122,16 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let waters = water::build(world)?;
     let ambience = ambience::Ambience::new(world);
     let weather = sky::HeartWeather::new(&tuning.weather);
+    let challenges = challenges::Challenges::new(&town, &goods);
     link::install(world, &base, HashMap::new());
     let tour = shots::Tour::from_env();
     // The scripted run opens stones; the screenshot tour wants the world alone.
     let meter = meter::Meter::new();
-    let demo = (std::env::var("ENGINE_VERIFY").is_ok() && tour.is_none() && !meter.measuring())
-        .then(Demo::default);
+    let demo = (std::env::var("ENGINE_VERIFY").is_ok()
+        && tour.is_none()
+        && !meter.measuring()
+        && std::env::var("GRAV_CHALLENGE").is_err())
+    .then(Demo::default);
     Ok(Game {
         tuning,
         base,
@@ -145,6 +151,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         waters,
         ambience,
         weather,
+        challenges,
         look,
         tour,
         demo,
@@ -231,7 +238,10 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         .cast_ray_ignoring(eye, ray, 120.0, hero_id)
         .map_or(eye + ray * 120.0, |h| h.point);
     let aim_dir = (aim_point - hand_now).normalize_or(g.hero.heading);
-    let over_ui = frame.ui.ctx().is_pointer_over_area() || g.boxes.bench || g.settings.open;
+    let over_ui = frame.ui.ctx().is_pointer_over_area()
+        || g.boxes.bench
+        || g.settings.open
+        || g.challenges.menu_open();
     let ready_to_throw = g.boxes.out && !g.boxes.bench;
     // + and - change the range (holding keeps changing it).
     let (step, rate) = (g.tuning.flight.range_step, g.tuning.flight.range_rate);
@@ -316,6 +326,17 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
     g.ambience.update(world, feet);
+    g.challenges.update(
+        world,
+        &frame.input,
+        &mut g.hero,
+        &g.boxes,
+        &g.town,
+        &g.response,
+        &g.goods,
+        &g.people,
+        dt,
+    )?;
 
     // --- Field visuals ---
     g.visuals.dust(world, &field, head, dt)?;
@@ -370,7 +391,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         "field is finite at the hero",
         field.acceleration(&BodyQuery::at(head)).is_finite(),
     );
-    if (0.3..0.5).contains(&frame.time) {
+    // (A challenge puts the hero elsewhere; it checks its own start.)
+    if (0.3..0.5).contains(&frame.time) && std::env::var("GRAV_CHALLENGE").is_err() {
         // Before the demo moves anything: the hero has landed and may walk.
         world.check(
             "hero stands and can walk at the start",
@@ -397,6 +419,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("lake_m3", g.waters.lake_volume(world));
     world.report("ambience_loops", g.ambience.playing);
     world.report("weather_light", g.weather.now.light);
+    world.report("challenges", g.challenges.count());
     world.report("weather_flare_g", g.weather.now.flare_g);
     world.check("the cavern has its sound", g.ambience.has_bed());
     Ok(())
@@ -412,6 +435,7 @@ fn hud(g: &mut Game, world: &mut World, frame: &Frame) {
         rgb(200, 60, 60),
     );
     g.settings.show(ui, world);
+    g.challenges.hud(frame);
     let pull = g.pull.total();
     let state = if g.hero.drifting {
         "drifting"

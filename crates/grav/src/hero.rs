@@ -117,6 +117,25 @@ impl Hero {
         })
     }
 
+    /// Set the hero down at `feet`, standing on `up`, facing `heading`
+    /// (a challenge's start).
+    pub fn put(
+        &mut self,
+        world: &mut World,
+        feet: Vec3,
+        up: Vec3,
+        heading: Vec3,
+    ) -> EngineResult<()> {
+        world.set_place(self.id, Place::new(feet.x, feet.y, feet.z))?;
+        self.last_safe = None;
+        self.walk_v = Vec3::ZERO;
+        self.slide = Vec3::ZERO;
+        self.cam_up = up;
+        self.heading = grav_core::along_ground(heading, up);
+        self.facing = self.heading;
+        Ok(())
+    }
+
     /// Draw the hero as an animated model (the Actors dwarf) instead of
     /// the block figure.
     pub fn set_animated_body(&mut self, world: &mut World, body: EntityId) {

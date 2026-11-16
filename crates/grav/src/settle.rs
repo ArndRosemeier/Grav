@@ -282,6 +282,7 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
         }
     }
     let _ = LANDMARKS.set(marks);
+    let _ = SITES.set(sites.clone());
     let _ = LIGHTS.set(sites.iter().filter_map(light_of).collect());
     sites
 }
@@ -389,6 +390,18 @@ fn light_of(s: &Site) -> Option<(Vec3, Vec3, Glow)> {
 /// A place worth a look: its name, where, its up, its front.
 type Mark = (&'static str, Vec3, Vec3, Vec3);
 static LANDMARKS: std::sync::OnceLock<Vec<Mark>> = std::sync::OnceLock::new();
+
+static SITES: std::sync::OnceLock<Vec<Site>> = std::sync::OnceLock::new();
+
+/// Everything built and set down (known once `plan` has run).
+pub fn sites() -> &'static [Site] {
+    SITES.get().map_or(&[], |s| s.as_slice())
+}
+
+/// How tall a tower of `variant` stands.
+pub fn tower_tall(variant: u32) -> f32 {
+    tower_height(variant)
+}
 
 /// Buildings to look at in the screenshot tour (known once `plan` has run).
 pub fn landmarks() -> &'static [Mark] {

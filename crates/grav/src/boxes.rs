@@ -188,6 +188,8 @@ pub struct Boxes {
     flight: Flight,
     /// Last message for the HUD and how long it stays.
     pub message: Option<(String, f32)>,
+    /// Throws since the start (challenges count the stones used).
+    pub thrown: u32,
 }
 
 impl Boxes {
@@ -269,6 +271,7 @@ impl Boxes {
             ghost: Ghost { root, fans, path },
             flight,
             message: None,
+            thrown: 0,
         })
     }
 
@@ -340,6 +343,7 @@ impl Boxes {
         }
         self.stones[i].throw(aim.from, aim.dir * aim.speed, aim.frame);
         self.out = false;
+        self.thrown += 1;
     }
 
     /// Change the throw's range by `by` metres, within the flight's limits.
