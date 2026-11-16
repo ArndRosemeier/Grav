@@ -5,6 +5,7 @@
 //! in hand (again: put it away), + / - more or less range, left click
 //! throws, Tab the box bench, R hold for stone sense.
 
+mod ambience;
 mod boxes;
 mod cavern;
 mod dwarf;
@@ -59,6 +60,7 @@ struct Game {
     response: Response,
     visuals: Visuals,
     waters: water::Waters,
+    ambience: ambience::Ambience,
     tour: Option<shots::Tour>,
     demo: Option<Demo>,
 }
@@ -110,6 +112,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let response = Response::new(world, built);
     let visuals = Visuals::new(world, at)?;
     let waters = water::build(world)?;
+    let ambience = ambience::Ambience::new(world);
     link::install(world, &base, HashMap::new());
     let tour = shots::Tour::from_env();
     // The scripted run opens stones; the screenshot tour wants the world alone.
@@ -132,6 +135,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         response,
         visuals,
         waters,
+        ambience,
         tour,
         demo,
     })
@@ -293,6 +297,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.people.update(world, &field, &g.base, dt)?;
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
+    g.ambience.update(world, feet);
 
     // --- Field visuals ---
     g.visuals.dust(world, &field, head, dt)?;
@@ -372,6 +377,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));
     world.report("lake_m3", g.waters.lake_volume(world));
+    world.report("ambience_loops", g.ambience.playing);
+    world.check("the cavern has its sound", g.ambience.has_bed());
     Ok(())
 }
 
