@@ -996,6 +996,64 @@ fn hold(variant: u32, detail: u32) -> EngineResult<Form> {
     Ok(f)
 }
 
+/// How wide a board of a patched wall is (the wood's look in look.rs
+/// draws its boards this wide too).
+const BOARD: f32 = 0.16;
+
+/// A thin plate that is not flat: the surface `on(u, v)`, with u and v
+/// from 0 to 1, in `n` by `n` cells, pushed out of its plane by
+/// `bulge(u, v)` metres along `out`, with a front, a back and an edge.
+fn plate(
+    f: &mut Form,
+    on: &dyn Fn(f32, f32) -> Vec3,
+    out: Vec3,
+    n: usize,
+    thick: f32,
+    bulge: &dyn Fn(f32, f32) -> f32,
+    paint: crate::flora::Paint,
+) -> EngineResult<()> {
+    let at = |u: f32, v: f32| on(u, v) + out * bulge(u, v);
+    let step = 1.0 / n as f32;
+    let half = out * thick * 0.5;
+    for side in [1.0_f32, -1.0] {
+        let mut ids = Vec::with_capacity((n + 1) * (n + 1));
+        for j in 0..=n {
+            for i in 0..=n {
+                let (u, v) = (i as f32 * step, j as f32 * step);
+                let e = step * 0.5;
+                let du = at((u + e).min(1.0), v) - at((u - e).max(0.0), v);
+                let dv = at(u, (v + e).min(1.0)) - at(u, (v - e).max(0.0));
+                let mut normal = du.cross(dv).normalize_or(out);
+                if normal.dot(out) < 0.0 {
+                    normal = -normal;
+                }
+                ids.push(f.point(at(u, v) + half * side, normal * side, paint)?);
+            }
+        }
+        for j in 0..n {
+            for i in 0..n {
+                let a = j * (n + 1) + i;
+                f.tri(ids[a], ids[a + 1], ids[a + n + 2])?;
+                f.tri(ids[a], ids[a + n + 2], ids[a + n + 1])?;
+            }
+        }
+    }
+    // The edge, all the way round.
+    let middle = at(0.5, 0.5);
+    for i in 0..n {
+        let (t0, t1) = (i as f32 * step, (i + 1) as f32 * step);
+        for (p, q) in [
+            (at(t0, 0.0), at(t1, 0.0)),
+            (at(t0, 1.0), at(t1, 1.0)),
+            (at(0.0, t0), at(0.0, t1)),
+            (at(1.0, t0), at(1.0, t1)),
+        ] {
+            f.face(&[p - half, q - half, q + half, p + half], middle, paint)?;
+        }
+    }
+    Ok(())
+}
+
 /// A goblin shack: a deck on crooked poles, walls and roof patched from
 /// plates, planks and cloth, braced and lashed, with a ladder, a crooked
 /// pipe and a lantern.
@@ -1045,7 +1103,69 @@ fn shack(variant: u32, detail: u32) -> EngineResult<Form> {
             corner(-1.0, 1.0, 3),
         ];
         let back = out * 0.03;
-        f.block(quad.map(|p| p - back), quad.map(|p| p + back), (color, 0.0))
+        if detail > 0 {
+            return f.block(quad.map(|p| p - back), quad.map(|p| p + back), (color, 0.0));
+        }
+        // Close up a patch is what it is made of.
+        let on = |u: f32, v: f32| quad[0].lerp(quad[1], u).lerp(quad[3].lerp(quad[2], u), v);
+        if surface == BOARDS {
+            // Boards side by side, each its own length, none quite in
+            // line (their width is the one the wood's look draws).
+            let (a0, a1) = (quad[0].dot(right), quad[1].dot(right));
+            let width = BOARD;
+            let first = (a0 / width).floor() as i32;
+            let last = (a1 / width).ceil() as i32;
+            for b in first..last {
+                let kb = key * 31 + (b - first) as u32;
+                let u0 = ((b as f32 * width - a0) / (a1 - a0)).clamp(0.0, 1.0);
+                let u1 = (((b + 1) as f32 * width - a0) / (a1 - a0)).clamp(0.0, 1.0);
+                if u1 - u0 < 0.25 * BOARD / (a1 - a0).abs() {
+                    continue;
+                }
+                // A hair of a gap either side, ragged ends, a little proud.
+                let gap = 0.006 / (a1 - a0).abs();
+                let (u0, u1) = (u0 + gap, u1 - gap);
+                let (v0, v1) = (-0.1 * hash(kb, 1), 1.0 + 0.1 * hash(kb, 2));
+                let lift = out * (0.012 * (hash(kb, 3) - 0.5));
+                let cup = out * 0.01 * (hash(kb, 4) - 0.5);
+                let low = [on(u0, v0) + lift, on(u1, v0) + lift + cup];
+                let high = [on(u0, v1) + lift - cup, on(u1, v1) + lift];
+                let half = out * 0.011;
+                f.block(
+                    [low[0] - half, low[1] - half, low[1] + half, low[0] + half],
+                    [
+                        high[0] - half,
+                        high[1] - half,
+                        high[1] + half,
+                        high[0] + half,
+                    ],
+                    (color * (0.85 + 0.3 * hash(kb, 5)), 0.0),
+                )?;
+            }
+            return Ok(());
+        }
+        if surface == SHEET {
+            // Sheet iron: buckled, a corner bent up.
+            let bent = (hash(key, 30) * 4.0) as u32 % 4;
+            let buckle = |u: f32, v: f32| {
+                let wave =
+                    (u * 5.3 + hash(key, 31) * 6.0).sin() * (v * 4.1 + hash(key, 32) * 6.0).cos();
+                let (cu, cv) = (
+                    if bent.is_multiple_of(2) { 1.0 - u } else { u },
+                    if bent < 2 { 1.0 - v } else { v },
+                );
+                0.02 * wave + 0.12 * (cu * cv).powi(4)
+            };
+            return plate(f, &on, out, 6, 0.006, &buckle, (color, 0.0));
+        }
+        // Cloth: tied at the top, hanging in folds that deepen to the hem.
+        let (a0, a1) = (quad[0].dot(right.abs()), quad[1].dot(right.abs()));
+        let sag = |u: f32, v: f32| {
+            let a = a0 + (a1 - a0) * u;
+            let hang = (a * 11.0 + v * 1.5).sin();
+            0.05 * hang * (1.0 - v) + 0.06 * (1.0 - v) * (u * std::f32::consts::PI).sin()
+        };
+        plate(f, &on, out, 8, 0.004, &sag, (color, 0.0))
     };
     // Poles: the four corners and one more, none straight.
     let mut corners = vec![(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd), (0.2 * hw, -hd)];
