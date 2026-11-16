@@ -93,6 +93,7 @@ pub fn base_field() -> Field {
             push_at_stripped: 0.3,
             push_at_wall: 0.02,
             push_scale: 1.0,
+            flare_g: 0.0,
         }),
         sources: Vec::new(),
     }

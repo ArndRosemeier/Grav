@@ -17,6 +17,7 @@ pub mod source;
 pub mod stone;
 pub mod tuning;
 pub mod vein;
+pub mod weather;
 
 pub use bonds::{BondClass, PieceId, PieceStage, Structure, StructureStep};
 pub use field::{BodyQuery, Field, FieldParts, Heart, LodestoneBody};
@@ -31,6 +32,7 @@ pub use stone::{is_round, BoxState, Face, Flight, Program, Stone, StoneSpec};
 pub use tuning::Tuning;
 
 pub use vein::{Vein, VeinShape};
+pub use weather::{Flare, Sky, Weather, WeatherTuning};
 
 pub use glam::{Quat, Vec3};
 

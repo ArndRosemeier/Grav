@@ -28,6 +28,8 @@ pub struct Tuning {
     pub hand_radius: (f32, f32),
     pub loot_max_g: f32,
     pub loot_max_radius: f32,
+    /// Heart weather's lengths and strengths.
+    pub weather: crate::weather::WeatherTuning,
 }
 
 impl Default for Tuning {
@@ -65,6 +67,7 @@ impl Default for Tuning {
             hand_radius: (5.0, 40.0),
             loot_max_g: 6.0,
             loot_max_radius: 80.0,
+            weather: Default::default(),
         }
     }
 }

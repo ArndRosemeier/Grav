@@ -21,6 +21,11 @@ pub struct Heart {
     pub push_at_wall: f32,
     /// Heart weather's push value for the region (1 = normal).
     pub push_scale: f32,
+    /// A flare's extra outward push in g (0 when there is none). Vein
+    /// shielding does not stop it; inside an inhabited vein's hold zone it
+    /// is capped at half the vein's pull there (H11).
+    #[serde(default)]
+    pub flare_g: f32,
 }
 
 impl Heart {
@@ -40,6 +45,25 @@ impl Heart {
         }
         d / r * self.push_g(r) * G
     }
+
+    /// The flare's push at `p` in m/s², before the cap of H11.
+    pub fn flare(&self, p: Vec3) -> Vec3 {
+        let d = p - self.center;
+        let r = d.length();
+        if r < 1e-3 || self.flare_g <= 0.0 {
+            return Vec3::ZERO;
+        }
+        d / r * self.flare_g * G
+    }
+}
+
+/// A flare's push where veins pull with `veins` (m/s²) and an inhabited
+/// vein holds the point by `inhabited_hold` (0..=1): it breaks through
+/// shielding, but in a town it is capped at half the local pull (H11).
+fn capped_flare(flare: Vec3, veins: Vec3, inhabited_hold: f32) -> Vec3 {
+    let free = flare.length();
+    let cap = free + (0.5 * veins.length() - free).min(0.0) * inhabited_hold;
+    flare.clamp_length_max(cap.max(0.0))
 }
 
 /// A body that is itself lodestone (a stone lying loose, held or thrown).
@@ -134,6 +158,7 @@ impl Field {
     pub fn parts(&self, q: &BodyQuery) -> FieldParts {
         let p = q.position;
         let mut parts = FieldParts::default();
+        let mut inhabited: f32 = 0.0;
         for v in &self.veins {
             if !v.may_reach(p) {
                 continue;
@@ -141,11 +166,15 @@ impl Field {
             let (a, share) = v.pull(p);
             parts.veins += a;
             parts.vein_hold = parts.vein_hold.max(share);
+            if v.inhabited {
+                inhabited = inhabited.max(share);
+            }
         }
         if let Some(h) = &self.heart {
             // A7: inside a vein's hold zone the steady push is shielded,
             // fading back in across the fade band.
-            parts.heart = h.push(p) * (1.0 - parts.vein_hold);
+            parts.heart = h.push(p) * (1.0 - parts.vein_hold)
+                + capped_flare(h.flare(p), parts.veins, inhabited);
         }
         let own = q.lodestone.and_then(|l| l.source);
         for s in &self.sources {
@@ -173,11 +202,18 @@ impl Field {
         if opposite == Charge::Repelling {
             if let Some(h) = &self.heart {
                 let mut hold: f32 = 0.0;
+                let mut inhabited: f32 = 0.0;
+                let mut veins = Vec3::ZERO;
                 for v in &self.veins {
-                    hold = hold.max(v.pull(p).1);
+                    let (a, share) = v.pull(p);
+                    hold = hold.max(share);
+                    veins += a;
+                    if v.inhabited {
+                        inhabited = inhabited.max(share);
+                    }
                 }
                 // The heart's push already points away from it.
-                out += h.push(p) * (1.0 - hold);
+                out += h.push(p) * (1.0 - hold) + capped_flare(h.flare(p), veins, inhabited);
             }
         }
         for s in &self.sources {
@@ -245,6 +281,7 @@ mod tests {
                 push_at_stripped: 0.3,
                 push_at_wall: 0.02,
                 push_scale: 1.0,
+                flare_g: 0.0,
             }),
             sources: vec![],
         }
@@ -266,6 +303,28 @@ mod tests {
         let r: f32 = 4800.0;
         let expect = (0.3 + (0.02 - 0.3) * (r - 3000.0) / 6000.0) * G;
         assert!((p.heart.length() - expect).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_flare_breaks_through_shielding_but_a_town_keeps_its_footing() {
+        // A flare would carry a town off its vein: H11 caps it there at
+        // half the vein's pull, while in the open it pushes in full.
+        let mut f = district();
+        let heart = f.heart.as_mut().unwrap();
+        // The heart below the town, so its push lifts the town off.
+        heart.center = Vec3::new(0.0, -5000.0, 0.0);
+        heart.flare_g = 0.8;
+        let town = f.parts(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0)));
+        assert!(town.heart.length() > 0.4 * G, "it gets through");
+        assert!(town.heart.length() <= 0.5 * town.veins.length() + 1e-3);
+        assert!(f.acceleration(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0))).y < 0.0);
+        let mut wild = f.clone();
+        wild.veins[0].inhabited = false;
+        let free = wild.parts(&BodyQuery::at(Vec3::new(0.0, 10.0, 0.0)));
+        assert!(
+            (free.heart.length() - 0.8 * G).abs() < 1e-3,
+            "uninhabited: full"
+        );
     }
 
     #[test]
