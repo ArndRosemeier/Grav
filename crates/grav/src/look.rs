@@ -396,7 +396,8 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 
 /// What people build with. uv.y says which stuff a part is made of
 /// (settle.rs): 0 foamed rock, 1 lattice metal, 2 stone blocks, 3 iron,
-/// 4 wood, 5 a lit pane, 6 cloth. uv.x is the light it gives.
+/// 4 wood, 5 a lit pane, 6 cloth, 7 nailed boards, 8 sheet iron. uv.x is
+/// the light it gives.
 const BUILT: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
@@ -408,7 +409,11 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var rough = 0.8;
     var metal = 0.0;
     var emission = vec3<f32>(0.0);
-    let grit = (vec3<f32>(gv_noise(p * 37.0), gv_noise(p * 37.0 + 9.0), gv_noise(p * 37.0 + 17.0)) - 0.5);
+    // Fine grain for the shading: two sizes that do not line up, so the
+    // noise's own grid does not show as squares close up.
+    let q = p.yzx * 131.0 + 4.0;
+    let grit = (vec3<f32>(gv_noise(p * 59.0), gv_noise(p * 59.0 + 9.0), gv_noise(p * 59.0 + 17.0)) - 0.5) * 0.6
+        + (vec3<f32>(gv_noise(q), gv_noise(q + 9.0), gv_noise(q + 17.0)) - 0.5) * 0.4;
     if kind < 0.5 {
         // Foamed rock: pale, full of small pores, cast in lifts that
         // show as faint lines, streaked dark where water runs down it.
@@ -472,12 +477,59 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
         c = c * (0.25 + 0.2 * quarrel.x) * (1.0 - 0.8 * lead);
         emission = base.color.rgb * base.color.rgb * lit * 1.35;
         rough = 0.18;
-    } else {
-        // Cloth: a coarse weave, faded and stained.
-        let weave = 0.8 + 0.2 * sin(p.x * 260.0) * sin(p.y * 260.0);
+    } else if kind < 6.5 {
+        // Cloth: a coarse weave, faded and stained, hanging in folds.
+        let weave = 0.9 + 0.1 * sin(p.x * 260.0) * sin(p.y * 260.0);
         let grime = gv_fbm3(p * 1.1 + 4.0);
         c = mix(c, vec3<f32>(dot(c, vec3<f32>(0.33))), 0.45) * weave * (0.35 + 0.75 * grime);
+        let side = abs(n0.z) > abs(n0.x);
+        let a = select(p.z, p.x, side);
+        let hang = a * 11.0 + gv_noise(p * 1.7) * 5.0 + p.y * 1.3;
+        let fold = cos(hang) * (0.35 + 0.65 * gv_noise(p * 0.9 + 8.0));
+        c = c * (0.8 + 0.2 * sin(hang));
+        n = normalize(n + select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), side) * fold * 0.5);
         rough = 1.0;
+    } else if kind < 7.5 {
+        // Boards nailed side by side: each its own shade and grain, gaps
+        // between them, knots, a nail near each end, grey with age.
+        let lying = abs(n0.y) > 0.7;
+        let side = abs(n0.z) > abs(n0.x) || lying;
+        let a = select(p.z, p.x, side);
+        let l = select(p.y, p.z, lying);
+        let u = a / 0.16;
+        let bh = gv_hash(vec3<f32>(floor(u), 3.0, 11.0));
+        let edge = abs(fract(u) - 0.5);
+        let gap = smoothstep(0.44, 0.495, edge);
+        let wob = gv_noise(vec3<f32>(floor(u) * 7.0, l * 0.9, 2.0));
+        let rings = gv_noise(vec3<f32>((fract(u) + wob * 0.6) * 9.0 + bh * 30.0, l * 0.7 + bh * 13.0, bh * 5.0));
+        let fibre = gv_noise(vec3<f32>(a * 140.0, l * 4.0, bh * 9.0));
+        let knots = smoothstep(0.86, 0.97, gv_noise(vec3<f32>(a * 9.0 + bh * 5.0, l * 2.2, 3.0)));
+        c = c * (0.55 + 0.7 * bh) * (0.7 + 0.45 * rings) * (0.85 + 0.3 * fibre) * (1.0 - 0.65 * knots);
+        c = mix(c, vec3<f32>(dot(c, vec3<f32>(0.33))) * 1.1, 0.2 + 0.4 * gv_fbm3(p * 1.5));
+        c = c * (1.0 - 0.88 * gap);
+        let nail_at = vec2<f32>((fract(u) - 0.5) * 0.16, (fract(l / 0.85 + bh) - 0.5) * 0.85);
+        let nail = 1.0 - smoothstep(0.007, 0.012, length(nail_at));
+        let weep = (1.0 - smoothstep(0.0, 0.012, abs(nail_at.x))) * smoothstep(0.0, -0.12, nail_at.y) * step(nail_at.y, 0.0)
+            * (1.0 - step(0.7, abs(n0.y)));
+        c = mix(c, vec3<f32>(0.2, 0.09, 0.04), weep * 0.5);
+        c = mix(c, vec3<f32>(0.07, 0.06, 0.06), nail);
+        metal = nail * 0.8;
+        rough = mix(0.92, 0.5, nail);
+        let across = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), side);
+        n = normalize(n + across * (fract(u) - 0.5) * 0.9 * smoothstep(0.3, 0.5, edge) + grit * 0.3);
+    } else {
+        // Sheet iron: beaten flat by hand, so it is dented all over; rust
+        // comes in patches and runs down it, pitted where it is deep.
+        let dent = vec3<f32>(gv_noise(p * 6.0 + 1.0), gv_noise(p * 6.0 + 5.0), gv_noise(p * 6.0 + 9.0)) - 0.5;
+        let run = gv_noise(vec3<f32>(p.x * 9.0, p.y * 0.6, p.z * 9.0));
+        let rust = smoothstep(0.42, 0.72, gv_fbm3(p * 2.2 + 5.0) * 0.65 + run * 0.45);
+        let pit = smoothstep(0.55, 0.9, gv_noise(p * 71.0 + 2.0));
+        let steel = vec3<f32>(0.2, 0.2, 0.22) * (0.6 + 0.6 * gv_noise(p * 23.0)) * (0.7 + 0.6 * gv_fbm3(p * 1.3));
+        let rusty = mix(vec3<f32>(0.26, 0.1, 0.04), vec3<f32>(0.4, 0.19, 0.07), gv_noise(p * 31.0 + 6.0)) * (1.0 - 0.5 * pit);
+        c = mix(steel, mix(rusty, c, 0.35), rust * 0.9);
+        metal = mix(0.9, 0.05, rust);
+        rough = mix(0.36, 0.96, rust);
+        n = normalize(n + dent * 0.4 + grit * 0.35 * rust);
     }
     o.color = vec4<f32>(c, 1.0);
     o.normal = n;

@@ -408,6 +408,10 @@ pub(crate) const IRON: f32 = 3.0;
 pub(crate) const WOOD: f32 = 4.0;
 pub(crate) const PANE: f32 = 5.0;
 pub(crate) const CLOTH: f32 = 6.0;
+/// Boards nailed side by side (the wood of a patched wall).
+pub(crate) const BOARDS: f32 = 7.0;
+/// Beaten sheet iron, rusting.
+pub(crate) const SHEET: f32 = 8.0;
 
 const UP: [Vec3; 3] = [Vec3::X, Vec3::Y, Vec3::Z];
 
@@ -1023,9 +1027,9 @@ fn shack(variant: u32, detail: u32) -> EngineResult<Form> {
         let out = right.cross(up);
         let stuff = hash(key, 2);
         let (surface, color) = if stuff < 0.45 {
-            (WOOD, woods[(hash(key, 3) * 3.0) as usize % 3])
+            (BOARDS, woods[(hash(key, 3) * 3.0) as usize % 3])
         } else if stuff < 0.82 {
-            (IRON, rust.lerp(Vec3::new(0.12, 0.12, 0.13), hash(key, 3)))
+            (SHEET, rust.lerp(Vec3::new(0.12, 0.12, 0.13), hash(key, 3)))
         } else {
             (CLOTH, cloths[(hash(key, 3) * 4.0) as usize % 4])
         };
@@ -1391,7 +1395,7 @@ fn shards(make: Make, form: &Form) -> EngineResult<Vec<Shard>> {
         Make::Hold if is(kind, PANE) => (Light, None),
         Make::Hold => (Timber, None),
         // Goblin patchwork: poles hold a little, the rest hardly.
-        Make::Shack if is(kind, WOOD) => (Timber, None),
+        Make::Shack if is(kind, WOOD) || is(kind, BOARDS) => (Timber, None),
         _ => (Light, None),
     })
 }
