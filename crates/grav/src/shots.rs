@@ -76,6 +76,7 @@ impl Tour {
         }
         match view.name {
             GRASS_STONE => Some((grass_stone().0, 2.5, 12.0)),
+            PEOPLE_STONE => Some((people_stone(), g.unwrap_or(3.0), 14.0)),
             TOWN_STONE => town_stone().map(|(at, ..)| (at, g.unwrap_or(3.0), 22.0)),
             _ => None,
         }
@@ -432,7 +433,24 @@ fn growth_views() -> Vec<View> {
             zoom: false,
         });
     }
+    // A strong stone over the umbral road: it takes people off their feet.
+    let (from, rot) = space::spire_frame(3.0, -40.0);
+    views.push(View {
+        name: PEOPLE_STONE,
+        eye: from + rot * Vec3::Y * 2.2,
+        target: people_stone(),
+        up: rot * Vec3::Y,
+        zoom: false,
+    });
     views
+}
+
+const PEOPLE_STONE: &str = "people: a strong stone over the umbral road";
+
+/// Where the tour's open stone hangs over the umbral road.
+fn people_stone() -> Vec3 {
+    let (at, rot) = space::spire_frame(0.0, -18.0);
+    at + rot * Vec3::Y * 4.0
 }
 
 /// A fixed view for the measuring tour (meter.rs).

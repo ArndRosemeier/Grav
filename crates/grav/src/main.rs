@@ -16,6 +16,7 @@ mod hero;
 mod link;
 mod look;
 mod meter;
+mod movable;
 mod people;
 mod pieces;
 mod response;
@@ -32,6 +33,7 @@ use boxes::Boxes;
 use engine::prelude::*;
 use grav_core::{BodyQuery, BoxState, Charge, Face, FieldParts, Program, Tuning, G};
 use hero::{Hero, HeroInput};
+use movable::Movable;
 use response::Response;
 use std::collections::HashMap;
 use visuals::Visuals;
@@ -121,7 +123,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         meter,
         town,
         goods,
-        people: people::People::new(),
+        people: people::People::new(look.unseen),
         hero,
         pull: FieldParts::default(),
         boxes,
@@ -289,7 +291,9 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     // Buildings a stone's field reaches become their bonded pieces.
     g.town
         .update(world, &mut g.response, &field, &g.base, &g.tuning, dt)?;
-    g.goods.update(world, &field)?;
+    // One rule for all that a pull can move: goods and people alike.
+    movable::take_hold(&mut g.goods, world, &field, &g.base)?;
+    movable::take_hold(&mut g.people, world, &field, &g.base)?;
     g.people.update(world, &field, &g.base, dt)?;
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
@@ -370,6 +374,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("goods", g.goods.count());
     world.report("people", g.people.count());
     world.report("people_fleeing", g.people.fleeing);
+    world.report("people_taken", g.people.taken);
+    world.report("people_lost", g.people.lost);
     world.report("goods_loose", g.goods.loose_total);
     world.report("building_pieces", g.town.count().1);
     world.report("water_m3", g.waters.volume(world));

@@ -4,9 +4,13 @@
 //! They are Actors characters, a few of each people, made on a worker
 //! thread while the game already runs and drawn as Engine crowds: full
 //! characters near the eye, light ones far off. Each walks its road, stops
-//! to talk or stand, and runs from an open stone.
+//! to talk or stand, and runs from an open stone. Whoever a stone's pull
+//! takes hold of all the same is a body like any other (movable.rs): they
+//! lose their footing, physics moves them as it moves goods and rubble,
+//! and they walk home when it lets go.
 
 use crate::flora::hash;
+use crate::movable::{self, Movable};
 use crate::rock::{self, Rock};
 use crate::space;
 use actors_engine::{BuildOptions, CharacterBuilder};
@@ -100,7 +104,32 @@ struct Person {
     /// Counts their choices, so each is another.
     turn: u32,
     pose: Option<&'static str>,
+    /// Where they stand on their road.
+    at: Vec3,
+    /// Off their feet or off their road: where they are and how they move.
+    loose: Option<Loose>,
 }
+
+/// Someone a pull has taken off the road.
+struct Loose {
+    /// Their body in the physics while the pull has them (none: on their
+    /// feet again, walking home).
+    body: Option<EntityId>,
+    at: Vec3,
+    /// Seconds they have lain where they came down, the pull gone.
+    down: f32,
+}
+
+/// A stone's pull this strong against the world's own takes people off
+/// their feet.
+const TAKES: f32 = 0.55;
+/// They get up this long after it has let go.
+const GETS_UP: f32 = 2.5;
+/// A person as a body: a capsule this tall from feet to middle, this wide.
+const MIDDLE: f32 = 0.85;
+const GIRTH: f32 = 0.3;
+/// Further from home than this they are gone.
+const LOST: f32 = 450.0;
 
 /// One character made: which people, which of its faces.
 type Made = (Folk, u32, AnimatedModel);
@@ -111,11 +140,64 @@ pub struct People {
     roads: Vec<Road>,
     /// How many are running from a stone this frame.
     pub fleeing: usize,
+    /// How many a pull has off their feet or off their road this frame.
+    pub taken: usize,
+    /// How many a pull has carried away for good.
+    pub lost: usize,
+    unseen: CustomMaterialId,
+}
+
+impl Movable for People {
+    fn count(&self) -> usize {
+        self.persons.len()
+    }
+
+    fn holds_at(&self, i: usize) -> Option<Vec3> {
+        let p = &self.persons[i];
+        p.loose.is_none().then_some(p.at)
+    }
+
+    /// People stand on their legs: it takes a pull of half the world's own.
+    fn grip(&self) -> f32 {
+        TAKES
+    }
+
+    /// Off their feet: a body for physics to move, which the person is
+    /// drawn at.
+    fn let_go(&mut self, world: &mut World, i: usize) -> EngineResult<()> {
+        let p = &mut self.persons[i];
+        let body = world.spawn(Shape::ball((0.0, 0.0, 0.0), GIRTH, rgb(0, 0, 0))?);
+        let place = world.crowd_agent_place(p.crowd, p.agent)?;
+        let up = place
+            .to_matrix()
+            .transform_vector3(Vec3::Y)
+            .normalize_or(Vec3::Y);
+        let middle = p.at + up * MIDDLE;
+        world.set_place(body, Place::new(middle.x, middle.y, middle.z))?;
+        world.set_custom_material(body, self.unseen)?;
+        world.set_casts_shadow(body, false)?;
+        world.add_body(
+            body,
+            Body::dynamic()
+                .shape(BodyShape::Capsule {
+                    half_height: MIDDLE - GIRTH,
+                    radius: GIRTH,
+                })
+                .density(1.0)
+                .ccd(true),
+        )?;
+        p.loose = Some(Loose {
+            body: Some(body),
+            at: p.at,
+            down: 0.0,
+        });
+        Ok(())
+    }
 }
 
 /// The clips a townsman has: standing, walking, running and two ways of
 /// standing about.
-const CLIPS: [&str; 5] = ["idle", "walk", "jog", "talk", "arms folded"];
+const CLIPS: [&str; 6] = ["idle", "walk", "jog", "talk", "arms folded", "jump"];
 
 fn make(dir: String, send: std::sync::mpsc::Sender<Made>) -> Result<(), String> {
     let mut builder = CharacterBuilder::load(&dir).map_err(|e| e.to_string())?;
@@ -156,7 +238,7 @@ fn make(dir: String, send: std::sync::mpsc::Sender<Made>) -> Result<(), String> 
 
 impl People {
     /// Start making the people (they come into the world as they are done).
-    pub fn new() -> Self {
+    pub fn new(unseen: CustomMaterialId) -> Self {
         let roads = vec![
             Road::Spire,
             Road::Lane(-1.0),
@@ -184,12 +266,10 @@ impl People {
             persons: Vec::new(),
             roads,
             fleeing: 0,
+            taken: 0,
+            lost: 0,
+            unseen,
         }
-    }
-
-    /// How many people are in the streets.
-    pub fn count(&self) -> usize {
-        self.persons.len()
     }
 
     /// A character has been made: it joins every road of its people, as
@@ -211,7 +291,7 @@ impl People {
         }
         let profile = CrowdProfile::new("idle", "walk")
             .walk_speed(WALK)
-            .poses(["jog", "talk", "arms folded"])
+            .poses(["jog", "talk", "arms folded", "jump"])
             .far_detail(0.12)
             .near(16.0, 6)
             .far(420.0)
@@ -243,6 +323,8 @@ impl People {
                     key,
                     turn: 0,
                     pose: None,
+                    at,
+                    loose: None,
                 });
             }
         }
@@ -263,11 +345,62 @@ impl People {
         }
         let rock = rock::shared();
         self.fleeing = 0;
-        for p in &mut self.persons {
+        self.taken = 0;
+        let mut gone = Vec::new();
+        for (index, p) in self.persons.iter_mut().enumerate() {
             let (from, to, _) = p.road.span();
             let Some(at) = p.road.at(rock, p.s, p.off) else {
                 continue;
             };
+            // Off their feet or off their road.
+            if let Some(l) = p.loose.as_mut() {
+                self.taken += 1;
+                let now = field.acceleration(&BodyQuery::at(l.at));
+                let mut up = (-now).normalize_or(Vec3::Y);
+                let (mut pose, mut speed, mut front) = (Some("jump"), 0.0, Vec3::Z);
+                if let Some(body) = l.body {
+                    // Physics has them, as it has goods and rubble.
+                    let middle = world.world_transform(body)?.w_axis.truncate();
+                    l.at = middle - up * MIDDLE;
+                    let slow = world.body_velocity(body).is_none_or(|v| v.length() < 1.0);
+                    let held = movable::held(field, base, l.at, TAKES);
+                    l.down = if slow && !held { l.down + dt } else { 0.0 };
+                    if slow {
+                        pose = None;
+                    }
+                    if l.at.distance(at) > LOST {
+                        world.despawn(body);
+                        gone.push(index);
+                        continue;
+                    }
+                    if l.down > GETS_UP {
+                        world.despawn(body);
+                        l.body = None;
+                    }
+                } else {
+                    // Up again: straight home, on whatever ground there is.
+                    up = (-base.acceleration(&BodyQuery::at(l.at))).normalize_or(Vec3::Y);
+                    let way = at - l.at;
+                    if way.length() < 0.6 {
+                        p.loose = None;
+                        continue;
+                    }
+                    front = way.normalize();
+                    let next = l.at + front * WALK * dt;
+                    l.at = world
+                        .cast_ray(next + up * 1.2, -up, 4.0)
+                        .map_or(next, |hit| hit.point);
+                    (pose, speed) = (None, WALK);
+                }
+                let front = (front - up * front.dot(up)).normalize_or(up.any_orthonormal_vector());
+                let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front));
+                world.set_crowd_agent(p.crowd, p.agent, space::place(l.at, rot), speed)?;
+                if pose != p.pose {
+                    world.set_crowd_agent_pose(p.crowd, p.agent, pose)?;
+                    p.pose = pose;
+                }
+                continue;
+            }
             let ahead = p
                 .road
                 .at(rock, p.s + 0.5, p.off)
@@ -283,6 +416,7 @@ impl People {
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let mut speed = 0.0;
             let mut pose = None;
+            p.at = at;
             if let Some((stone, _)) = threat {
                 self.fleeing += 1;
                 p.heading = if (at - stone).dot(ahead) >= 0.0 {
@@ -337,6 +471,12 @@ impl People {
                 world.set_crowd_agent_pose(p.crowd, p.agent, pose)?;
                 p.pose = pose;
             }
+        }
+        // Those carried away for good leave the streets.
+        for index in gone.into_iter().rev() {
+            let p = self.persons.swap_remove(index);
+            world.remove_crowd_agent(p.crowd, p.agent);
+            self.lost += 1;
         }
         Ok(())
     }

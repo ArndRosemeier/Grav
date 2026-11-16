@@ -1,14 +1,14 @@
 //! Loose goods in the streets (W5): jars by the umbral towers, casks by
 //! the dwarven holds, crates and sacks by the goblin shacks.
 //!
-//! They stand as drawn shapes among many of their kind until a stone's
-//! field reaches them. Then each becomes a body of its own that follows
-//! the pull, and stays one.
+//! They stand as drawn shapes among many of their kind until a pull takes
+//! hold of them (movable.rs). Then each becomes a body of its own that
+//! follows the pull, and stays one.
 
 use crate::flora::{fine, hash, solid, Form};
+use crate::movable::{self, Movable};
 use crate::settle::{CLOTH, FOAM, IRON, LATTICE, PANE, WOOD};
 use engine::prelude::*;
-use grav_core::Field;
 use std::f32::consts::{PI, TAU};
 
 /// A hoop or band round the y axis at height `y`: `r` its inner radius.
@@ -319,6 +319,10 @@ pub struct Goods {
     kinds: Vec<Kind>,
     /// Per kind and place: is it loose (a body of its own).
     loose: Vec<Vec<bool>>,
+    /// Every one of them: its kind and its place among that kind.
+    index: Vec<(usize, usize)>,
+    /// Kinds of which some came loose since they were last drawn.
+    changed: Vec<bool>,
     material: CustomMaterialId,
     pub loose_total: usize,
 }
@@ -326,57 +330,64 @@ pub struct Goods {
 impl Goods {
     pub fn new(kinds: Vec<Kind>, material: CustomMaterialId) -> Self {
         let loose = kinds.iter().map(|k| vec![false; k.places.len()]).collect();
+        let index = kinds
+            .iter()
+            .enumerate()
+            .flat_map(|(k, kind)| (0..kind.places.len()).map(move |n| (k, n)))
+            .collect();
         Self {
+            changed: vec![false; kinds.len()],
             kinds,
             loose,
+            index,
             material,
             loose_total: 0,
         }
     }
+}
 
-    /// How many goods there are.
-    pub fn count(&self) -> usize {
-        self.kinds.iter().map(|k| k.places.len()).sum()
+impl Movable for Goods {
+    fn count(&self) -> usize {
+        self.index.len()
     }
 
-    /// Each frame: whatever an open stone's field reaches comes loose.
-    pub fn update(&mut self, world: &mut World, field: &Field) -> EngineResult<()> {
-        for source in &field.sources {
-            if source.opening <= 0.0 {
+    fn holds_at(&self, i: usize) -> Option<Vec3> {
+        let (k, n) = self.index[i];
+        (!self.loose[k][n]).then(|| self.kinds[k].places[n].position)
+    }
+
+    /// Goods only stand there: any pull to speak of makes them bodies,
+    /// and what they do then is up to their weight and the ground.
+    fn grip(&self) -> f32 {
+        0.05
+    }
+
+    fn let_go(&mut self, world: &mut World, i: usize) -> EngineResult<()> {
+        let (k, n) = self.index[i];
+        self.loose[k][n] = true;
+        self.loose_total += 1;
+        self.changed[k] = true;
+        if let Some(solid) = self.kinds[k].solids[n].take() {
+            world.despawn(solid);
+        }
+        let id = world.spawn(self.kinds[k].mesh.clone());
+        world.set_place(id, self.kinds[k].places[n])?;
+        world.set_custom_material(id, self.material)?;
+        movable::loose_body(world, id, 0.6)
+    }
+
+    /// Draw what still stands of the kinds that lost some.
+    fn settle(&mut self, world: &mut World) -> EngineResult<()> {
+        for k in 0..self.kinds.len() {
+            if !std::mem::take(&mut self.changed[k]) {
                 continue;
             }
-            for k in 0..self.kinds.len() {
-                let mut changed = false;
-                for i in 0..self.kinds[k].places.len() {
-                    let place = self.kinds[k].places[i];
-                    if self.loose[k][i]
-                        || place.position.distance(source.position) > source.radius + 1.0
-                    {
-                        continue;
-                    }
-                    self.loose[k][i] = true;
-                    self.loose_total += 1;
-                    changed = true;
-                    if let Some(solid) = self.kinds[k].solids[i].take() {
-                        world.despawn(solid);
-                    }
-                    let id = world.spawn(self.kinds[k].mesh.clone());
-                    world.set_place(id, place)?;
-                    world.set_custom_material(id, self.material)?;
-                    let body = Body::dynamic().density(0.6).ccd(true);
-                    if world.add_body(id, body.clone()).is_err() {
-                        world.add_body(id, body.shape(BodyShape::BoundingBox))?;
-                    }
-                }
-                if changed {
-                    let kind = &self.kinds[k];
-                    let still: Vec<Place> = (0..kind.places.len())
-                        .filter(|&i| !self.loose[k][i])
-                        .map(|i| kind.places[i])
-                        .collect();
-                    world.set_lod_places(kind.set, &still)?;
-                }
-            }
+            let kind = &self.kinds[k];
+            let still: Vec<Place> = (0..kind.places.len())
+                .filter(|&n| !self.loose[k][n])
+                .map(|n| kind.places[n])
+                .collect();
+            world.set_lod_places(kind.set, &still)?;
         }
         Ok(())
     }

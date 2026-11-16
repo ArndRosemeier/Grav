@@ -272,12 +272,7 @@ impl Response {
             let (at, rot) = self.rest[k];
             world.set_place(p.entity, place(at, rot).with_tint(rgb(235, 225, 215)))?;
             world.remove_body(p.entity);
-            // Solid by its own shape (what is drawn is what collides); a
-            // sliver too small for that by its box.
-            let body = Body::dynamic().density(density(class)).ccd(true);
-            if world.add_body(p.entity, body.clone()).is_err() {
-                world.add_body(p.entity, body.shape(BodyShape::BoundingBox))?;
-            }
+            crate::movable::loose_body(world, p.entity, density(class))?;
             self.debris.push((p.entity, 0.0));
             self.broken_total += 1;
         }
