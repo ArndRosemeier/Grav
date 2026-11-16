@@ -23,7 +23,7 @@ python tools/get_packs.py   # once: the Actors packs (about 450 MB) into assets/
 cargo run --release -p grav
 ```
 
-`measure.bat` (or `GRAV_MEASURE=1 cargo run --release -p grav`) measures the
+`measure.bat` (or `GRAV_MEASURE=1 ENGINE_PACE=0 cargo run --release -p grav`) measures the
 frame rate from five fixed views, with everything drawn and then with grass,
 plants, buildings and the far cavern taken away in turn, and writes what each
 costs to `measure.txt`. `GRAV_FRAME_TIMES=1` shows frame times while playing.
