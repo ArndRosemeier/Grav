@@ -17,19 +17,12 @@ const SETTLE_MARGIN: f32 = 3.0;
 /// particles lie, and Engine's reflections take the world's +y as up, so
 /// a lake that hangs upside down mirrors sky in blotches. This calms the
 /// surface towards the basin's own up (params[0].xyz) and stirs it with
-/// a fine ripple instead. The mesh also has a sheet where the water lies
-/// on the rock; facing into the rock, it would catch light that is not
-/// there and show through the water in pale patches, so it is clear.
+/// a fine ripple instead.
 const SURFACE: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
     let up = normalize(m.params[0].xyz);
     let n = normalize(m.normal);
-    if dot(n, up) < -0.15 {
-        o.color = vec4<f32>(base.color.rgb, 0.0);
-        o.roughness = 1.0;
-        return o;
-    }
     let face = up;
     let p = m.world_pos;
     let t = m.time;
