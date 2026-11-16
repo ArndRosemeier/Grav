@@ -17,7 +17,6 @@ use actors_engine::{BuildOptions, CharacterBuilder};
 use actors_generator::{AllowOptions, Gender, RaceChoiceOption, RandomOptions};
 use actors_human::RaceId;
 use engine::anim::AnimatedModel;
-use engine::glam::Mat3;
 use engine::prelude::*;
 use grav_core::{BodyQuery, Field, Movement};
 use std::path::Path;
@@ -465,8 +464,7 @@ impl People {
             };
             // Upright against the world's own pull, facing along the road.
             let up = base.up_at(at, Vec3::Y);
-            let front = grav_core::along_ground(ahead * p.heading, up);
-            let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front));
+            let rot = grav_core::upright(up, ahead * p.heading);
             world.set_crowd_agent(p.crowd, p.agent, space::place(at, rot), speed)?;
             if pose != p.pose {
                 world.set_crowd_agent_pose(p.crowd, p.agent, pose)?;
