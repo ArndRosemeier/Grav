@@ -25,6 +25,22 @@ pub struct Response {
     signs: u32,
     /// Seconds until the next trickle of dust from the straining pieces.
     trickle: f32,
+    /// The sounds of straining and breaking, light stuff and heavy
+    /// (assets/sounds; loaded when first wanted).
+    sounds: Option<Vec<Vec<Sound>>>,
+}
+
+/// The sounds by what happens and to what: `strain_light_0.ogg` and so
+/// on, three of each. One that is missing is left out.
+fn load_sounds() -> Vec<Vec<Sound>> {
+    ["strain_light", "strain_heavy", "break_light", "break_heavy"]
+        .iter()
+        .map(|name| {
+            (0..3)
+                .filter_map(|n| Sound::load(format!("assets/sounds/{name}_{n}.ogg")).ok())
+                .collect()
+        })
+        .collect()
 }
 
 /// The colour of a kind of piece's dust.
@@ -69,6 +85,7 @@ impl Response {
             previewed: Vec::new(),
             signs: 0,
             trickle: 0.0,
+            sounds: None,
         }
     }
 
@@ -156,19 +173,26 @@ impl Response {
             world.particles_mut().burst(chips)?;
         }
         if sound {
-            let variant = (hash(self.signs, 3) * 3.0) as usize % 3;
-            let stock = match (breaking, class) {
-                (true, BondClass::Light | BondClass::Timber) => Stock::KnockSoft,
-                (true, _) => Stock::Crumble,
-                (false, BondClass::Light | BondClass::Timber) => Stock::KnockSoft,
-                (false, _) => Stock::KnockHard,
+            let light = matches!(class, BondClass::Light | BondClass::Timber);
+            let set = usize::from(breaking) * 2 + usize::from(!light);
+            let sounds = self.sounds.get_or_insert_with(load_sounds);
+            let n = sounds[set].len();
+            // Our own sounds; the engine's stock ones where a file is missing.
+            let sound = if n > 0 {
+                sounds[set][(hash(self.signs, 3) * n as f32) as usize % n].clone()
+            } else {
+                let stock = match (breaking, light) {
+                    (_, true) => Stock::KnockSoft,
+                    (true, false) => Stock::Crumble,
+                    (false, false) => Stock::KnockHard,
+                };
+                Sound::stock(stock, (hash(self.signs, 3) * 3.0) as usize % 3)
             };
-            let volume = if breaking { 0.8 } else { 0.35 };
             world.play_sound(
-                &Sound::stock(stock, variant),
+                &sound,
                 PlaySound::at(at)
-                    .volume(volume)
-                    .pitch(0.85 + 0.3 * hash(self.signs, 4)),
+                    .volume(if breaking { 0.9 } else { 0.45 })
+                    .pitch(0.9 + 0.2 * hash(self.signs, 4)),
             );
         }
         Ok(())
@@ -315,5 +339,24 @@ impl Response {
             }
         }
         Ok(self.previewed.len())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use engine::prelude::*;
+
+    #[test]
+    fn every_sound_of_straining_and_breaking_is_there_and_plays() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/sounds");
+        for name in ["strain_light", "strain_heavy", "break_light", "break_heavy"] {
+            for n in 0..3 {
+                let sound = Sound::load(format!("{dir}/{name}_{n}.ogg")).unwrap();
+                assert!(
+                    sound.duration() > 0.5 && sound.duration() < 9.0,
+                    "{name}_{n}"
+                );
+            }
+        }
     }
 }
