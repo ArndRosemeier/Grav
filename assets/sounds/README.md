@@ -33,3 +33,4 @@ levelled to -20 LUFS (the cavern bed to -24), mono Ogg Vorbis. Played by
 | amb_goblin | The sound of a ramshackle camp: wooden planks creaking, loose sheet metal rattling in a draught, a faint distant clatter of pots, continuous ambience, no music, no voice |
 | amb_spring | The sound of a small spring bubbling up into a stone basin and trickling over its rim, close, continuous, no music, no voice |
 | amb_fire | The sound of a coal fire burning in an iron brazier, soft crackling and gentle roar, close, continuous, no music, no voice |
+| flare_rumble | The sound of a deep rumbling surge of force rolling through a vast stone cavern: low subsonic roar swelling and ebbing, rocks groaning and faint grit trickling, ominous and continuous, no music, no voice |

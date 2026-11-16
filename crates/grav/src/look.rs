@@ -685,6 +685,8 @@ pub struct Look {
     /// Draws nothing: for shapes that are only there to be solid.
     pub unseen: CustomMaterialId,
     heart_dir: Vec3,
+    blades: CustomMaterialId,
+    heart_center: Vec3,
 }
 
 impl Look {
@@ -743,6 +745,8 @@ impl Look {
             cavern,
             water,
             heart_dir,
+            blades: blade_material,
+            heart_center,
         })
     }
 
@@ -761,11 +765,39 @@ impl Look {
     }
 
     /// Light and air: the heart as the one great light, deep cool shadow,
-    /// mist that takes the heart's colour (Q5).
+    /// mist that takes the heart's colour (Q5). Starts bright; heart
+    /// weather changes it with `weather`.
     pub fn light_and_air(&self, world: &mut World) -> EngineResult<()> {
+        self.weather(world, 1.0, 0.0)?;
+        world.set_view_distance(16_000.0)?;
+        world.set_shadows(Some(ShadowSettings {
+            cascade_end_m: [18.0, 70.0, 260.0],
+            map_size: 2048,
+            raymarch_height: false,
+            ..ShadowSettings::default()
+        }));
+        world.set_tone_map(ToneMap::Agx);
+        Ok(())
+    }
+
+    /// The heart's light as heart weather has it: `light` from 0 (a dim
+    /// phase, the region's night) to 1 (a bright patch faces it), and
+    /// `flare` from 0 to 1 while a flare surges. At night the heart still
+    /// glows, but faintly, and the towns' lamps carry the scene; a flare
+    /// makes the heart blaze blue-white and the mist with it.
+    pub fn weather(&self, world: &mut World, light: f32, flare: f32) -> EngineResult<()> {
+        let day = light.clamp(0.0, 1.0);
+        let flare = flare.clamp(0.0, 1.0);
+        let lerp = |a: f32, b: f32| a + (b - a) * day;
         // The mist carries the heart's light through the whole hollow: far
         // rock pales into a blue glow, it never goes black.
-        let mist = rgb(38, 52, 80);
+        let glow = lerp(0.22, 1.0) * (1.0 + 1.6 * flare);
+        let mist_rgb = Vec3::new(38.0, 52.0, 80.0) * glow + Vec3::new(30.0, 50.0, 90.0) * flare;
+        let mist = rgb(
+            mist_rgb.x.min(255.0) as u8,
+            mist_rgb.y.min(255.0) as u8,
+            mist_rgb.z.min(255.0) as u8,
+        );
         world.set_sky(Some(Sky {
             zenith: mist,
             horizon: mist,
@@ -777,21 +809,33 @@ impl Look {
         }));
         world.set_physical_sky(None);
         world.set_clear_color(mist);
-        world.set_sun(self.heart_dir, 0.10);
-        world.set_sun_color(HEART_LIGHT * 1.9);
+        world.set_sun(self.heart_dir, lerp(0.03, 0.10) * (1.0 + 1.5 * flare));
+        let flare_tint = Vec3::new(0.85, 0.95, 1.0);
+        world.set_sun_color(
+            HEART_LIGHT * 1.9 * lerp(0.05, 1.0) + flare_tint * 3.2 * flare * lerp(0.6, 1.0),
+        );
         let mut haze = Haze::new(mist, 20_000.0);
         haze.base_y = -100_000.0;
         haze.height_m = 1_000_000.0;
         world.set_haze(Some(haze));
-        world.set_view_distance(16_000.0)?;
-        world.set_shadows(Some(ShadowSettings {
-            cascade_end_m: [18.0, 70.0, 260.0],
-            map_size: 2048,
-            raymarch_height: false,
-            ..ShadowSettings::default()
-        }));
-        world.set_bloom(BloomSettings::default().with_intensity(0.55)?);
-        world.set_tone_map(ToneMap::Agx);
+        // Lamps glow out into the night a little more.
+        world.set_bloom(BloomSettings::default().with_intensity(lerp(0.75, 0.55) + 0.35 * flare)?);
+        world.set_material_param(
+            self.blades,
+            0,
+            [
+                9.0 * lerp(0.3, 1.0) * (1.0 + 4.0 * flare),
+                HEART_CORE,
+                0.0,
+                0.0,
+            ],
+        )?;
+        let c = self.heart_center;
+        world.set_material_param(
+            self.cavern,
+            0,
+            [c.x, c.y, c.z, CAVERN_LIGHT * lerp(0.2, 1.0) * (1.0 + flare)],
+        )?;
         Ok(())
     }
 }

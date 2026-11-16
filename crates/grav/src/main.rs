@@ -24,6 +24,7 @@ mod response;
 mod rock;
 mod settle;
 mod shots;
+mod sky;
 mod space;
 mod town;
 mod visuals;
@@ -61,6 +62,8 @@ struct Game {
     visuals: Visuals,
     waters: water::Waters,
     ambience: ambience::Ambience,
+    weather: sky::HeartWeather,
+    look: look::Look,
     tour: Option<shots::Tour>,
     demo: Option<Demo>,
 }
@@ -113,6 +116,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let visuals = Visuals::new(world, at)?;
     let waters = water::build(world)?;
     let ambience = ambience::Ambience::new(world);
+    let weather = sky::HeartWeather::new(&tuning.weather);
     link::install(world, &base, HashMap::new());
     let tour = shots::Tour::from_env();
     // The scripted run opens stones; the screenshot tour wants the world alone.
@@ -136,6 +140,8 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         visuals,
         waters,
         ambience,
+        weather,
+        look,
         tour,
         demo,
     })
@@ -264,6 +270,10 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     let hand = g.hero.hand(world);
     let mut field = g.base.clone();
     field.sources = g.boxes.sources();
+    // Heart weather: the region's day, night and flares.
+    g.weather.update(dt);
+    g.weather.push(&mut field);
+    g.weather.show(world, &g.look)?;
     if let Some((at, g_max, radius)) = g.tour.as_ref().and_then(|t| t.stone()) {
         // The screenshot tour's own open stone, for views that want one.
         field.sources.push(grav_core::Source::new(
@@ -378,6 +388,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("water_m3", g.waters.volume(world));
     world.report("lake_m3", g.waters.lake_volume(world));
     world.report("ambience_loops", g.ambience.playing);
+    world.report("weather_light", g.weather.now.light);
+    world.report("weather_flare_g", g.weather.now.flare_g);
     world.check("the cavern has its sound", g.ambience.has_bed());
     Ok(())
 }
