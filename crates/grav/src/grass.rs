@@ -11,7 +11,7 @@
 use crate::flora::{fine, hash, Form};
 use crate::space;
 use engine::prelude::*;
-use grav_core::{BodyQuery, Field};
+use grav_core::Field;
 use std::collections::HashMap;
 
 /// One clump: where it roots, how tall it is, how it is turned about its
@@ -106,8 +106,7 @@ pub fn clump(detail: u32) -> EngineResult<Mesh> {
 /// Where a clump stands in `field`: rooted at its place, straight
 /// against the pull there.
 fn stand(blade: &Blade, field: &Field) -> Place {
-    let pull = field.acceleration(&BodyQuery::at(blade.at));
-    let up = (-pull).normalize_or(Vec3::Y);
+    let up = field.up_at(blade.at, Vec3::Y);
     let rot = Quat::from_rotation_arc(Vec3::Y, up) * Quat::from_rotation_y(blade.turn);
     space::place(blade.at, rot).with_scale(blade.size)
 }

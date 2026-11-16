@@ -249,12 +249,9 @@ pub fn plan(rock: &Rock, waters: &Waters) -> Vec<Site> {
             let Some(at) = rock.flare_at(theta, rho) else {
                 continue;
             };
-            let pull = field.acceleration(&grav_core::BodyQuery::at(at));
-            let up = (-pull).normalize_or(Vec3::Z);
+            let up = field.up_at(at, Vec3::Z);
             let out = Vec3::new(theta.sin(), theta.cos(), 0.0) * if inner { 1.0 } else { -1.0 };
-            let front = (out - up * out.dot(up)).normalize_or(up.any_orthonormal_vector());
-            let rot =
-                grav_core::facing(up, front) * Quat::from_rotation_y((hash(k, 2) - 0.5) * 0.7);
+            let rot = grav_core::upright(up, out) * Quat::from_rotation_y((hash(k, 2) - 0.5) * 0.7);
             sites.push(Site {
                 make: Make::Shack,
                 variant: (hash(k, 3) * 3.0) as u32 % 3,
@@ -334,8 +331,7 @@ fn wares(rock: &Rock, sites: &mut Vec<Site>) {
             {
                 continue;
             }
-            let pull = field.acceleration(&grav_core::BodyQuery::at(at));
-            let up = (-pull).normalize_or(s.rot * Vec3::Y);
+            let up = field.up_at(at, s.rot * Vec3::Y);
             sites.push(Site {
                 make: kinds[(hash(km, 6) * kinds.len() as f32) as usize % kinds.len()],
                 variant: (hash(km, 7) * 2.0) as u32 % 2,

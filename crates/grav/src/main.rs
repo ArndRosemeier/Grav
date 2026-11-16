@@ -323,11 +323,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
             g.response.preview(world, None)?;
         }
     }
-    let hand_frame = {
-        let front = (g.hero.heading - up * g.hero.heading.dot(up))
-            .normalize_or(up.any_orthonormal_vector());
-        grav_core::facing(up, front)
-    };
+    let hand_frame = { grav_core::upright(up, g.hero.heading) };
     g.boxes.draw(world, hand, hand_frame, aim.as_ref(), dt)?;
     if g.demo.is_some() && (3.4..3.9).contains(&frame.time) {
         // A close look at the hanging box with its front lid open.
@@ -464,7 +460,7 @@ fn run_demo(
             let up = up_at(world);
             let feet = world.world_transform(hero)?.w_axis.truncate();
             let from = feet + up * 1.0;
-            let heading = (Vec3::Z - up * up.z).normalize_or(up.any_orthonormal_vector());
+            let heading = grav_core::along_ground(Vec3::Z, up);
             let dir = (heading + up * 0.25).normalize();
             let speed = boxes.flight().speed_for(7.0);
             boxes.stones[0].program = Program::only(&[Face::Front], 0.3, 1.5);

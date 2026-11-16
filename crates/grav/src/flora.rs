@@ -22,7 +22,6 @@
 use crate::rock::Waters;
 use crate::space;
 use crate::wet::{Ground, Water};
-use engine::glam::Mat3;
 use engine::prelude::*;
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -181,7 +180,7 @@ impl<'a> Soil<'a> {
     /// The direction to the heart along the ground at `i`.
     fn to_heart(&self, i: usize) -> Vec3 {
         let n = self.ground.up[i];
-        (self.heart - n * self.heart.dot(n)).normalize_or(n.any_orthonormal_vector())
+        grav_core::along_ground(self.heart, n)
     }
 
     /// Open ground a plant can root in: not under water, not on a road.
@@ -210,9 +209,7 @@ impl<'a> Soil<'a> {
     fn frame(&self, i: usize, lean: f32, turn: f32) -> Quat {
         let ahead = self.to_heart(i);
         let up = (self.ground.up[i] + ahead * lean).normalize();
-        let z = (ahead - up * ahead.dot(up)).normalize_or(up.any_orthonormal_vector());
-        let x = up.cross(z);
-        Quat::from_mat3(&Mat3::from_cols(x, up, z)) * Quat::from_rotation_y(turn)
+        grav_core::upright(up, ahead) * Quat::from_rotation_y(turn)
     }
 
     /// A point of the ground near `i`, off the grid point by part of a cell.

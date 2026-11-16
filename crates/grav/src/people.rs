@@ -395,8 +395,7 @@ impl People {
                         .map_or(next, |hit| hit.point);
                     (pose, speed) = (None, WALK);
                 }
-                let front = (front - up * front.dot(up)).normalize_or(up.any_orthonormal_vector());
-                let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front));
+                let rot = grav_core::upright(up, front);
                 world.set_crowd_agent(p.crowd, p.agent, space::place(l.at, rot), speed)?;
                 if pose != p.pose {
                     world.set_crowd_agent_pose(p.crowd, p.agent, pose)?;
@@ -465,9 +464,8 @@ impl People {
                 continue;
             };
             // Upright against the world's own pull, facing along the road.
-            let up = (-base.acceleration(&BodyQuery::at(at))).normalize_or(Vec3::Y);
-            let front = ahead * p.heading;
-            let front = (front - up * front.dot(up)).normalize_or(up.any_orthonormal_vector());
+            let up = base.up_at(at, Vec3::Y);
+            let front = grav_core::along_ground(ahead * p.heading, up);
             let rot = Quat::from_mat3(&Mat3::from_cols(up.cross(front), up, front));
             world.set_crowd_agent(p.crowd, p.agent, space::place(at, rot), speed)?;
             if pose != p.pose {

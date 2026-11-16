@@ -319,9 +319,9 @@ impl Boxes {
             None => from + dir * range,
         };
         let across = dir - up * dir.dot(up);
-        let front = across.try_normalize().unwrap_or_else(|| {
-            (heading - up * heading.dot(up)).normalize_or(up.any_orthonormal_vector())
-        });
+        let front = across
+            .try_normalize()
+            .unwrap_or_else(|| grav_core::along_ground(heading, up));
         let frame = grav_core::facing(up, front);
         Aim {
             from,

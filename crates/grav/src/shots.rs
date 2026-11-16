@@ -423,8 +423,7 @@ fn growth_views() -> Vec<View> {
         let (Some(from), Some(to)) = (from, to) else {
             continue;
         };
-        let pull = field.acceleration(&grav_core::BodyQuery::at(from));
-        let up = (-pull).normalize_or(Vec3::Y);
+        let up = field.up_at(from, Vec3::Y);
         views.push(View {
             name,
             eye: from + up * 1.5,

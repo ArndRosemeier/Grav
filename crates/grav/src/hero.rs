@@ -2,7 +2,7 @@
 //! camera and its body.
 
 use crate::space::place;
-use engine::glam::{Mat3, Vec2};
+use engine::glam::Vec2;
 use engine::prelude::*;
 use grav_core::{
     can_walk, climb_slope_deg, fall_damage, jump_speed, slide_step, walk_accel, walk_speed_in,
@@ -89,7 +89,7 @@ impl Hero {
         )?;
         let body = world.spawn(mesh);
         // Face along the spire, towards the town.
-        let heading = (Vec3::Z - up * up.z).normalize_or(up.any_orthonormal_vector());
+        let heading = grav_core::along_ground(Vec3::Z, up);
         Ok(Self {
             id,
             body,
@@ -290,9 +290,7 @@ impl Hero {
         } else {
             want
         };
-        let z = across(self.facing).normalize_or(up.any_orthonormal_vector());
-        let x = up.cross(z);
-        let rot = Quat::from_mat3(&Mat3::from_cols(x, up, z));
+        let rot = grav_core::upright(up, self.facing);
         world.set_place(self.body, place(feet, rot))?;
         if let Some(clip) = self.clip {
             // The legs show his own walking, not a slide: idle, walk or

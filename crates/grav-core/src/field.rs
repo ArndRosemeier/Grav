@@ -102,6 +102,12 @@ pub struct Field {
 }
 
 impl Field {
+    /// Up at `at`: against the pull there (for a thing standing square to
+    /// it), or `or` where nothing pulls.
+    pub fn up_at(&self, at: Vec3, or: Vec3) -> Vec3 {
+        (-self.acceleration(&BodyQuery::at(at))).normalize_or(or)
+    }
+
     /// The acceleration acting on a body (A1 to A15), in m/s².
     pub fn acceleration(&self, q: &BodyQuery) -> Vec3 {
         let ordinary = self.parts(q).total();

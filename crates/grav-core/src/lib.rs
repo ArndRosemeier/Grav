@@ -41,5 +41,16 @@ pub fn facing(up: Vec3, front: Vec3) -> Quat {
     Quat::from_mat3(&glam::Mat3::from_cols(up.cross(front), up, front))
 }
 
+/// The unit direction along the ground (square to `up`) closest to `v`;
+/// any such direction when `v` points straight up or down.
+pub fn along_ground(v: Vec3, up: Vec3) -> Vec3 {
+    (v - up * v.dot(up)).normalize_or(up.any_orthonormal_vector())
+}
+
+/// Standing on `up`, facing as near `toward` as the ground allows.
+pub fn upright(up: Vec3, toward: Vec3) -> Quat {
+    facing(up, along_ground(toward, up))
+}
+
 /// 1 g in m/s². Pull strengths in the design are given in g.
 pub const G: f32 = 9.81;
