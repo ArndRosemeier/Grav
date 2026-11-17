@@ -24,8 +24,8 @@ pub use bonds::{BondClass, PieceId, PieceStage, Structure, StructureStep};
 pub use challenge::{Attempt, Challenge, Collateral, Objective, Observed, Outcome, Score};
 pub use field::{BodyQuery, Field, FieldParts, Heart, LodestoneBody};
 pub use hero::{
-    can_walk, climb_slope_deg, fall_damage, footing_holds, grip, jump_speed, press_and_drag,
-    slide_step, walk_accel, walk_speed_in, Movement, ROCK_FRICTION,
+    can_walk, climb_slope_deg, fall_damage, footing_holds, grip, held_damping, jump_speed,
+    press_and_drag, slide_step, walk_accel, walk_speed_in, Movement, ROCK_FRICTION,
 };
 
 pub use profile::{Profile, Selectivity, TimeDial};
@@ -61,6 +61,13 @@ pub fn upright(up: Vec3, toward: Vec3) -> Quat {
 pub const DEFAULT_ONE_G: f32 = EARTH_G * 0.5;
 
 static ONE_G_BITS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Linear air drag over `dt` seconds at `rate` per second, solved
+/// exactly: the share of speed kept, `e^(-rate dt)`. Flying boxes and the
+/// hero held in the air by a stone both slow by this one rule.
+pub fn drag_keep(rate: f32, dt: f32) -> f32 {
+    (-rate.max(0.0) * dt).exp()
+}
 
 /// What "1 g" means in this world, in m/s². Pull strengths in the design
 /// are given in g, and every pull, press and fall scales with this. The

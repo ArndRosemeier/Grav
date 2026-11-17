@@ -24,6 +24,28 @@ pub enum Objective {
         to: [f32; 3],
         radius: f32,
     },
+    /// Keep a thing within `radius` of `anchor` for `seconds` (while a
+    /// flare or a weak vein tries to carry it off).
+    Hold {
+        thing: String,
+        anchor: [f32; 3],
+        radius: f32,
+        seconds: f32,
+    },
+    /// Gather `count` loose pieces in a place (a plug, a dam, a bridge).
+    Build {
+        zone: [f32; 3],
+        radius: f32,
+        count: u32,
+    },
+    /// Bring someone out to a safe place, alive.
+    Rescue {
+        who: String,
+        to: [f32; 3],
+        radius: f32,
+    },
+    /// Defeat opponents: knock `foes` of them off their feet.
+    Fight { foes: u32 },
 }
 
 /// What the hero must not do, or not exceed. A broken constraint fails
@@ -101,7 +123,10 @@ impl Challenge {
         match &self.objective {
             Objective::Reach { target, .. } => Some(Vec3::from(*target)),
             Objective::Haul { to, .. } => Some(Vec3::from(*to)),
-            Objective::Demolish { .. } => None,
+            Objective::Hold { anchor, .. } => Some(Vec3::from(*anchor)),
+            Objective::Build { zone, .. } => Some(Vec3::from(*zone)),
+            Objective::Rescue { to, .. } => Some(Vec3::from(*to)),
+            Objective::Demolish { .. } | Objective::Fight { .. } => None,
         }
     }
 
@@ -121,6 +146,7 @@ impl Challenge {
         if !finite(self.start) {
             return bad("start is not a finite point");
         }
+        let place = |v: [f32; 3], r: f32| finite(v) && r > 0.0;
         match &self.objective {
             Objective::Reach { target, radius } => {
                 if !finite(*target) || *radius <= 0.0 || radius.is_nan() {
@@ -138,6 +164,44 @@ impl Challenge {
             Objective::Haul { cargo, to, radius } => {
                 if cargo.is_empty() || !finite(*to) || *radius <= 0.0 || radius.is_nan() {
                     return bad("haul needs cargo, a finite place and a radius above 0");
+                }
+            }
+            Objective::Hold {
+                thing,
+                anchor,
+                radius,
+                seconds,
+            } => {
+                if thing.is_empty()
+                    || !place(*anchor, *radius)
+                    || seconds.is_nan()
+                    || *seconds <= 0.0
+                {
+                    return bad(
+                        "hold needs a thing, a finite anchor, a radius and seconds above 0",
+                    );
+                }
+                if self.constraints.time_limit_s.is_some_and(|t| t < *seconds) {
+                    return bad("hold lasts longer than its time limit");
+                }
+            }
+            Objective::Build {
+                zone,
+                radius,
+                count,
+            } => {
+                if !place(*zone, *radius) || *count == 0 {
+                    return bad("build needs a finite zone, a radius and a count above 0");
+                }
+            }
+            Objective::Rescue { who, to, radius } => {
+                if who.is_empty() || !place(*to, *radius) {
+                    return bad("rescue needs someone, a finite place and a radius above 0");
+                }
+            }
+            Objective::Fight { foes } => {
+                if *foes == 0 {
+                    return bad("fight needs at least one foe");
                 }
             }
         }
@@ -177,8 +241,17 @@ impl Collateral {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Observed {
     pub hero: Vec3,
-    /// Where the cargo is, for a haul.
+    /// Where the cargo is, for a haul; the thing held, for a hold; the
+    /// one to rescue, for a rescue.
     pub cargo: Option<Vec3>,
+    /// The thing held or the one to rescue is gone for good.
+    pub lost: bool,
+    /// Loose pieces at rest in a build's zone.
+    pub in_zone: u32,
+    /// Opponents knocked off their feet.
+    pub foes_down: u32,
+    /// The hero is down (no health left).
+    pub hero_down: bool,
     /// Share of the target structure's pieces broken loose, 0..1.
     pub target_down: f32,
     /// Pieces broken in structures that are to be spared.
@@ -263,6 +336,18 @@ impl Attempt {
                     .filter(|&m| seen.collateral.points() > m)
                     .map(|_| "too much damage around".to_string())
             });
+        let fail = fail.or_else(|| seen.hero_down.then(|| "you went down".to_string()));
+        let fail = fail.or_else(|| match &c.objective {
+            Objective::Rescue { .. } if seen.lost => Some("they were carried away".to_string()),
+            Objective::Hold { anchor, radius, .. } => {
+                let out = seen.lost
+                    || seen
+                        .cargo
+                        .is_none_or(|p| p.distance(Vec3::from(*anchor)) > *radius);
+                out.then(|| "it was carried off".to_string())
+            }
+            _ => None,
+        });
         if let Some(why) = fail {
             self.outcome = Outcome::Failed(why);
             return &self.outcome;
@@ -272,9 +357,12 @@ impl Attempt {
                 seen.hero.distance(Vec3::from(*target)) <= *radius
             }
             Objective::Demolish { share, .. } => seen.target_down >= *share,
-            Objective::Haul { to, radius, .. } => seen
+            Objective::Haul { to, radius, .. } | Objective::Rescue { to, radius, .. } => seen
                 .cargo
                 .is_some_and(|p| p.distance(Vec3::from(*to)) <= *radius),
+            Objective::Hold { seconds, .. } => self.elapsed_s >= *seconds,
+            Objective::Build { count, .. } => seen.in_zone >= *count,
+            Objective::Fight { foes } => seen.foes_down >= *foes,
         };
         if done {
             self.outcome = Outcome::Won;
@@ -387,6 +475,77 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(hurt.step(&c2, 0.1, &seen), Outcome::Failed(_)));
+    }
+
+    #[test]
+    #[ignore = "full"]
+    fn hold_build_rescue_and_fight_follow_their_rules() {
+        let mut c = reach();
+        c.objective = Objective::Hold {
+            thing: "cask".into(),
+            anchor: [0.0; 3],
+            radius: 2.0,
+            seconds: 5.0,
+        };
+        let at_home = Observed {
+            cargo: Some(Vec3::new(1.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        let mut a = Attempt::new();
+        assert_eq!(a.step(&c, 3.0, &at_home), &Outcome::Running);
+        assert_eq!(a.step(&c, 3.0, &at_home), &Outcome::Won);
+        let mut blown = Attempt::new();
+        let off = Observed {
+            cargo: Some(Vec3::new(3.0, 0.0, 0.0)),
+            ..Default::default()
+        };
+        assert!(matches!(blown.step(&c, 1.0, &off), Outcome::Failed(_)));
+
+        c.objective = Objective::Build {
+            zone: [0.0; 3],
+            radius: 3.0,
+            count: 4,
+        };
+        let mut b = Attempt::new();
+        let mut seen = Observed {
+            in_zone: 3,
+            ..Default::default()
+        };
+        assert_eq!(b.step(&c, 1.0, &seen), &Outcome::Running);
+        seen.in_zone = 4;
+        assert_eq!(b.step(&c, 1.0, &seen), &Outcome::Won);
+
+        c.objective = Objective::Rescue {
+            who: "miner".into(),
+            to: [0.0, 0.0, 10.0],
+            radius: 2.0,
+        };
+        let mut r = Attempt::new();
+        let gone = Observed {
+            lost: true,
+            ..Default::default()
+        };
+        assert!(matches!(r.step(&c, 1.0, &gone), Outcome::Failed(_)));
+        let mut r = Attempt::new();
+        let safe = Observed {
+            cargo: Some(Vec3::new(0.0, 0.0, 9.0)),
+            ..Default::default()
+        };
+        assert_eq!(r.step(&c, 1.0, &safe), &Outcome::Won);
+
+        c.objective = Objective::Fight { foes: 3 };
+        let mut f = Attempt::new();
+        let down = Observed {
+            hero_down: true,
+            ..Default::default()
+        };
+        assert!(matches!(f.step(&c, 1.0, &down), Outcome::Failed(_)));
+        let mut f = Attempt::new();
+        let won = Observed {
+            foes_down: 3,
+            ..Default::default()
+        };
+        assert_eq!(f.step(&c, 1.0, &won), &Outcome::Won);
     }
 
     #[test]

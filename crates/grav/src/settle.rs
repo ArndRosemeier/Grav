@@ -398,11 +398,6 @@ pub fn sites() -> &'static [Site] {
     SITES.get().map_or(&[], |s| s.as_slice())
 }
 
-/// How tall a tower of `variant` stands.
-pub fn tower_tall(variant: u32) -> f32 {
-    tower_height(variant)
-}
-
 /// Buildings to look at in the screenshot tour (known once `plan` has run).
 pub fn landmarks() -> &'static [Mark] {
     LANDMARKS.get().map_or(&[], |m| m.as_slice())

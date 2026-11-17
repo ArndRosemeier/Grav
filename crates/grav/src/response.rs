@@ -101,6 +101,16 @@ impl Response {
         self.built.pieces.extend(pieces);
     }
 
+    /// Where the broken pieces are that have come to rest.
+    pub fn resting_debris(&self, world: &World) -> Vec<Vec3> {
+        self.debris
+            .iter()
+            .filter(|(e, _)| world.body_velocity(*e).is_none_or(|v| v.length() < 0.5))
+            .filter_map(|(e, _)| world.world_transform(*e).ok())
+            .map(|m| m.w_axis.truncate())
+            .collect()
+    }
+
     /// True when every piece of structure `s` stands and is calm.
     pub fn at_rest(&self, s: usize) -> bool {
         self.built.structures[s]

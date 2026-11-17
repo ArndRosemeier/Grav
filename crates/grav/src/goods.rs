@@ -373,6 +373,17 @@ impl Goods {
         }
     }
 
+    /// Where the goods are that came loose and lie still.
+    pub fn resting_loose(&self, world: &World) -> Vec<Vec3> {
+        self.bodies
+            .iter()
+            .flatten()
+            .filter(|&&b| world.body_velocity(b).is_none_or(|v| v.length() < 0.5))
+            .filter_map(|&b| world.world_transform(b).ok())
+            .map(|m| m.w_axis.truncate())
+            .collect()
+    }
+
     /// Have goods `i` come loose.
     pub fn is_loose(&self, i: usize) -> bool {
         self.bodies.get(i).is_some_and(|b| b.is_some())

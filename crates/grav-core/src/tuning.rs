@@ -56,8 +56,12 @@ impl Default for Tuning {
         };
         Self {
             movement: Movement::default(),
-            bond_light: 0.3,
-            bond_timber: 0.8,
+            // A common stone (1.5 g, 15 m) breaks light work within about
+            // 5 m and timber within 3 m; masonry only right on it (Arnd,
+            // 2026-11-16: a stone anywhere near a building collapsed it,
+            // with 0.3 and 0.8 a whole street went).
+            bond_light: 1.0,
+            bond_timber: 1.2,
             bond_masonry: 1.5,
             bond_dwarven: 3.0,
             bond_guild: 5.0,

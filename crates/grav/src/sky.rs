@@ -19,6 +19,8 @@ pub struct HeartWeather {
     pub hours: f64,
     /// The weather now.
     pub now: Sky,
+    /// A flare began this frame (it may shed a shard).
+    pub flare_began: bool,
     hold_light: Option<f32>,
     hold_flare: Option<f32>,
     /// What the look was last set to (light, flare), so it is set again
@@ -41,6 +43,7 @@ impl HeartWeather {
             weather,
             hours,
             now,
+            flare_began: false,
             hold_light: env("GRAV_LIGHT"),
             hold_flare: env("GRAV_FLARE"),
             shown: None,
@@ -51,6 +54,7 @@ impl HeartWeather {
 
     /// Move the clock on by `dt` real seconds.
     pub fn update(&mut self, dt: f32) {
+        let was = self.now.flare > 0.05;
         self.hours += (dt / self.weather.tuning.hour_seconds.max(1.0e-3)) as f64;
         self.now = self.weather.at(self.hours);
         if let Some(light) = self.hold_light {
@@ -61,6 +65,7 @@ impl HeartWeather {
             self.now.flare_g = g.max(0.0);
             self.now.flare = if g > 0.0 { 1.0 } else { 0.0 };
         }
+        self.flare_began = !was && self.now.flare > 0.05;
     }
 
     /// The flare's push goes into this frame's field (not the field the

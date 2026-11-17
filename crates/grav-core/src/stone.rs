@@ -258,7 +258,7 @@ impl Stone {
         };
         // Linear drag, solved exactly: v(t) = v0 e^(-k t).
         let k = flight.drag.max(1e-3);
-        let decay = (-k * dt).exp();
+        let decay = crate::drag_keep(k, dt);
         let to = at + velocity * (1.0 - decay) / k;
         let velocity = velocity * decay;
         self.state = if velocity.length() < flight.rest_speed {

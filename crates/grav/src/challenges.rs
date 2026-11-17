@@ -17,14 +17,16 @@
 use crate::boxes::Boxes;
 use crate::goods::Goods;
 use crate::hero::Hero;
-use crate::people::People;
+use crate::people::{People, Role};
 use crate::response::Response;
 use crate::settle::{self, Make};
 use crate::town::Town;
 use engine::egui::{self, Align2, Color32, RichText};
 use engine::prelude::*;
 use grav_core::challenge::{Constraints, Par, Reward};
-use grav_core::{Attempt, Challenge, Collateral, Objective, Observed, Outcome};
+use grav_core::{
+    Attempt, Challenge, Charge, Collateral, Face, Objective, Observed, Outcome, Program,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -41,6 +43,10 @@ struct Links {
     cargo: Option<usize>,
     /// The ground's up at the start.
     up: Vec3,
+    /// A heart shard set down when the challenge starts.
+    shard: Option<Vec3>,
+    /// Raiders: this many goblins nearest this place.
+    foes: Option<(Vec3, usize)>,
 }
 
 /// The world's tallies when an attempt began.
@@ -86,6 +92,12 @@ pub struct Challenges {
     pending: Option<usize>,
     /// The label over the goal.
     marker: Option<EntityId>,
+    /// The people a challenge has given a part (their keys).
+    cast: Vec<u32>,
+    /// `GRAV_SOLVE=1`: each challenge plays its own solution (verify runs
+    /// prove that it can be won), and the step it is at.
+    solving: bool,
+    solve_step: u32,
     /// The sandbox was picked: take the goal's label away.
     leave: bool,
     /// Save or load asked for in the menu, for the game to do.
@@ -105,23 +117,31 @@ pub enum FileAct {
 
 /// The ground under `p` along `-up`: walked down from above until the
 /// rock begins (the physics may not know the rock yet on the first frame).
-fn ground(world: &World, p: Vec3, up: Vec3) -> Vec3 {
-    let rock = crate::rock::shared();
-    let solid = |q: Vec3| rock.in_spire(q) || rock.in_island(q);
-    let top = p + up * 25.0;
-    if !solid(top) {
-        let mut q = top;
-        for _ in 0..240 {
-            let next = q - up * 0.25;
-            if solid(next) {
-                return q + up * 0.1;
-            }
-            q = next;
-        }
+pub fn ground(world: &World, p: Vec3, up: Vec3) -> Vec3 {
+    if let Some(q) = ground_point(p, up) {
+        return q;
     }
     world
         .cast_ray(p + up * 4.0, -up, 12.0)
         .map_or(p, |hit| hit.point + up * 0.05)
+}
+
+/// The rock's surface under `p` along `-up`, from the rock's own shape.
+fn ground_point(p: Vec3, up: Vec3) -> Option<Vec3> {
+    let rock = crate::rock::shared();
+    let solid = |q: Vec3| rock.in_spire(q) || rock.in_island(q);
+    let mut q = p + up * 25.0;
+    if solid(q) {
+        return None;
+    }
+    for _ in 0..240 {
+        let next = q - up * 0.25;
+        if solid(next) {
+            return Some(q + up * 0.1);
+        }
+        q = next;
+    }
+    None
 }
 
 /// A place `dist` from `center` on the ground plane of `up`, as far from
@@ -163,21 +183,33 @@ impl Challenges {
         let mut links = Vec::new();
         let of = |make: Make| sites.iter().filter(move |s| s.make == make);
 
-        // Reach: up to the lantern room of an umbral tower.
-        if let Some(t) = of(Make::Tower).nth(3) {
-            let up = t.rot * Vec3::Y;
-            let front = t.rot * Vec3::Z;
-            let tall = settle::tower_tall(t.variant);
-            let start = open_spot(t.at, up, 16.0, front);
+        // Reach: a guild beacon hangs high over the spire road where no
+        // building stands near (umbral towers are foam: a stone strong
+        // enough to lift the hero would tear them apart).
+        let rock = crate::rock::shared();
+        let built: Vec<Vec3> = sites
+            .iter()
+            .filter(|s| !s.make.loose())
+            .map(|s| s.at)
+            .collect();
+        let room = |p: Vec3| built.iter().map(|b| b.distance(p)).fold(f32::MAX, f32::min);
+        let lookout = (-60..=60)
+            .map(|n| rock.spire_point(0.0, n as f32 * 4.0))
+            .max_by(|a, b| room(*a).total_cmp(&room(*b)));
+        if let Some(foot) = lookout.filter(|p| room(*p) > 24.0) {
+            let base = crate::space::base_field();
+            let up = base.up_at(foot, Vec3::Y);
+            let along = grav_core::along_ground(Vec3::Z, up);
+            let start = foot - along * 5.0;
             list.push(Challenge {
-                id: "reach_tower".into(),
-                title: "The lantern room".into(),
-                brief: "Get up to the lantern room of the tall umbral tower. Its stair is locked; the pull is not.".into(),
+                id: "reach_beacon".into(),
+                title: "The guild beacon".into(),
+                brief: "The guild's beacon hangs nine metres over the road. Get up to it. One stone alone will not lift you from the ground.".into(),
                 start: start.into(),
                 start_yaw_deg: 0.0,
                 objective: Objective::Reach {
-                    target: (t.at + up * tall * 0.86).into(),
-                    radius: 3.5,
+                    target: (foot + up * 9.0).into(),
+                    radius: 2.5,
                 },
                 constraints: Constraints {
                     time_limit_s: Some(240.0),
@@ -188,7 +220,7 @@ impl Challenges {
                     standing: vec![("umbrals".into(), 2)],
                 },
                 par: Par {
-                    time_s: 60.0,
+                    time_s: 30.0,
                     boxes: 2,
                     collateral: 0.0,
                 },
@@ -248,21 +280,44 @@ impl Challenges {
             });
         }
 
-        // Haul: a crate from the camp to the other camp's shacks... or
-        // the nearest shack 15 m or more away.
-        if let Some(c) = of(Make::Crate).nth(1) {
-            let up = c.rot * Vec3::Y;
-            let to = shacks
+        // Haul: the crate with the most room around it and along a way
+        // nine metres on, so stones that hop it there need not come near
+        // a building (a stone breaks light work within about 5 m).
+        let edge = |p: Vec3| {
+            sites
                 .iter()
-                .filter(|s| s.at.distance(c.at) > 15.0)
-                .min_by(|a, b| a.at.distance(c.at).total_cmp(&b.at.distance(c.at)))
-                .map(|s| s.at + s.rot * Vec3::Z * 4.0);
+                .filter(|s| !s.make.loose())
+                .map(|s| s.at.distance(p) - s.clear)
+                .fold(f32::MAX, f32::min)
+        };
+        let way = of(Make::Crate)
+            .flat_map(|c| {
+                let up = c.rot * Vec3::Y;
+                let a = up.any_orthonormal_vector();
+                let b = up.cross(a);
+                (0..16).map(move |n| {
+                    let angle = n as f32 / 16.0 * std::f32::consts::TAU;
+                    (c, a * angle.cos() + b * angle.sin())
+                })
+            })
+            .map(|(c, dir)| {
+                // Where the two stones hang must be clear; the end only
+                // needs to be off the buildings.
+                let stones = edge(c.at + dir * 3.5).min(edge(c.at + dir * 7.0));
+                let end = edge(c.at + dir * 9.0);
+                (c, dir, if end > 1.0 { stones } else { -1.0 })
+            })
+            .filter(|w| w.2 > 5.0)
+            .max_by(|x, y| x.2.total_cmp(&y.2));
+        if let Some((c, dir, _)) = way {
+            let up = c.rot * Vec3::Y;
+            let to = ground_point(c.at + dir * 9.0, up);
             if let Some(to) = to {
                 let start = open_spot(c.at, up, 6.0, c.at - to);
                 list.push(Challenge {
                     id: "haul_crate".into(),
-                    title: "A crate for the next shack".into(),
-                    brief: "Bring the crate to the shack down the road (the marked place). It is too heavy to carry: let a pull do it.".into(),
+                    title: "A crate down the road".into(),
+                    brief: "Bring the crate nine metres to the marked place. It is too heavy to carry, and no stone pulls that far: move it in hops.".into(),
                     start: start.into(),
                     start_yaw_deg: 0.0,
                     objective: Objective::Haul {
@@ -293,6 +348,156 @@ impl Challenges {
             }
         }
 
+        // Hold: a heart shard has come down by the dwarven stores; keep
+        // the guild's cask where it stands while it pushes.
+        if let Some(c) = of(Make::Cask).nth(3) {
+            let up = c.rot * Vec3::Y;
+            // In front of the cask, away from the hold behind it; the hero
+            // comes from the side.
+            let shard = c.at + grav_core::along_ground(c.rot * Vec3::Z, up) * 2.5;
+            let start = open_spot(c.at, up, 10.0, c.rot * Vec3::X);
+            list.push(Challenge {
+                id: "hold_cask".into(),
+                title: "The guild's cask".into(),
+                brief: "A splinter of the heart has struck by the stores. As its charge wakes it will push everything away: keep the marked cask in its place for 40 seconds.".into(),
+                start: start.into(),
+                start_yaw_deg: 0.0,
+                objective: Objective::Hold {
+                    thing: "cask".into(),
+                    anchor: c.at.into(),
+                    radius: 2.0,
+                    seconds: 40.0,
+                },
+                constraints: Constraints {
+                    time_limit_s: Some(70.0),
+                    ..Default::default()
+                },
+                reward: Reward {
+                    coin: 20,
+                    standing: vec![("dwarves".into(), 3)],
+                },
+                par: Par {
+                    time_s: 40.0,
+                    boxes: 1,
+                    collateral: 6.0,
+                },
+            });
+            links.push(Links {
+                cargo: goods.item_at(c.at),
+                shard: Some(shard),
+                up,
+                ..Default::default()
+            });
+        }
+
+        // Build: a barricade in front of a goblin shack, from its goods
+        // (the shack of the near camp with the most of them out front).
+        let near_camp = |p: Vec3| {
+            let theta = p.x.atan2(p.y);
+            (theta - 50.0_f32.to_radians()).abs() < 0.3
+        };
+        let wares = |s: &settle::Site| -> Vec<Vec3> {
+            of(Make::Crate)
+                .chain(of(Make::Sack))
+                .filter(|g| g.at.distance(s.at) < 4.5)
+                .map(|g| g.at)
+                .collect()
+        };
+        let stocked = shacks
+            .iter()
+            .filter(|s| near_camp(s.at))
+            .max_by_key(|s| wares(s).len())
+            .filter(|s| wares(s).len() >= 3);
+        if let Some(shack) = stocked {
+            let goods_at = wares(shack);
+            let middle = goods_at.iter().copied().sum::<Vec3>() / goods_at.len() as f32;
+            let up = shack.rot * Vec3::Y;
+            let out = grav_core::along_ground(middle - shack.at, up);
+            let zone = ground_point(middle + out * 3.0, up).unwrap_or(middle + out * 3.0);
+            let start = open_spot(zone, up, 9.0, out);
+            list.push(Challenge {
+                id: "build_barricade".into(),
+                title: "A barricade".into(),
+                brief: "Raiders are coming. Pile three loose things (goods, planks, rubble) in the marked place in front of the shack to block the way.".into(),
+                start: start.into(),
+                start_yaw_deg: 0.0,
+                objective: Objective::Build {
+                    zone: zone.into(),
+                    radius: 2.0,
+                    count: 3,
+                },
+                constraints: Constraints {
+                    time_limit_s: Some(240.0),
+                    no_harm: true,
+                    ..Default::default()
+                },
+                reward: Reward {
+                    coin: 25,
+                    standing: vec![("goblins".into(), 3)],
+                },
+                par: Par {
+                    time_s: 40.0,
+                    boxes: 1,
+                    collateral: 20.0,
+                },
+            });
+            links.push(Links {
+                up,
+                ..Default::default()
+            });
+        }
+
+        // Fight: at the goblin camp on the far side of the ring road.
+        // `ring(s, off)` is a point on the road, `s` m along it.
+        let camp = 228.0_f32.to_radians();
+        let ring = |s: f32, off: f32| {
+            rock.flare_at(
+                camp + s / crate::rock::RING_ROAD,
+                crate::rock::RING_ROAD + off,
+            )
+        };
+        // The hero waits on the road where the raiders reach him clear of
+        // the shacks, so a stone among them does not wreck the camp too.
+        let wait = (25..=44)
+            .flat_map(|d| [d as f32, -(d as f32)])
+            .filter_map(|d| {
+                let here = ring(d, 0.0)?;
+                let met = ring(d - d.signum() * 8.0, 0.0)?;
+                Some((here, edge(here).min(edge(met))))
+            })
+            .max_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|w| w.0);
+        if let (Some(camp_mid), Some(start)) = (ring(0.0, 0.0), wait) {
+            let base = crate::space::base_field();
+            let up = base.up_at(start, Vec3::Z);
+            list.push(Challenge {
+                id: "fight_raiders".into(),
+                title: "Raiders".into(),
+                brief: "Three raiders from the camp are coming for you. Knock all three off their feet before they beat you down.".into(),
+                start: start.into(),
+                start_yaw_deg: 0.0,
+                objective: Objective::Fight { foes: 3 },
+                constraints: Constraints {
+                    time_limit_s: Some(180.0),
+                    ..Default::default()
+                },
+                reward: Reward {
+                    coin: 30,
+                    standing: vec![("goblins".into(), -2)],
+                },
+                par: Par {
+                    time_s: 45.0,
+                    boxes: 2,
+                    collateral: 10.0,
+                },
+            });
+            links.push(Links {
+                up,
+                foes: Some((camp_mid, 3)),
+                ..Default::default()
+            });
+        }
+
         let progress = std::fs::read_to_string(PROGRESS_FILE)
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
@@ -317,6 +522,9 @@ impl Challenges {
             progress,
             pending,
             marker: None,
+            cast: Vec::new(),
+            solving: std::env::var("GRAV_SOLVE").is_ok(),
+            solve_step: 0,
             leave: false,
             file: std::env::var("GRAV_LOAD").is_ok().then_some(FileAct::Load),
             saved: crate::save::SaveGame::exists(),
@@ -353,7 +561,8 @@ impl Challenges {
         town: &Town,
         response: &Response,
         goods: &Goods,
-        people: &People,
+        people: &mut People,
+        shards: &mut crate::shards::Shards,
         dt: f32,
     ) -> EngineResult<()> {
         if input.pressed(Key::M) {
@@ -377,6 +586,13 @@ impl Challenges {
             }
             .unwrap_or(feet + up.any_orthonormal_vector());
             self.mark(world, c.goal())?;
+            shards.clear(world);
+            people.release();
+            self.cast.clear();
+            self.solve_step = 0;
+            if let Some(at) = self.links[index].shard {
+                shards.place(world, ground(world, at, up), up, 20.0)?;
+            }
             hero.put(world, feet, up, toward - feet)?;
             self.mode = Mode::Playing {
                 index,
@@ -395,7 +611,19 @@ impl Challenges {
         };
         let c = &self.list[*index];
         let l = self.links[*index];
+        // People take their parts once they have come into the world.
+        if self.cast.is_empty() {
+            if let Some((at, n)) = l.foes {
+                self.cast = people.cast(at, n, Role::Foe);
+            }
+        }
+        let cast_ready = !self.cast.is_empty() || l.foes.is_none();
         let now = Self::tally(boxes, response, goods, people);
+        // What a hazard (a shard) breaks before the hero has thrown
+        // anything is not the hero's doing.
+        if now.thrown == start.thrown {
+            *start = now;
+        }
         let (target_total, target_broken) =
             l.target.map_or((1, 0), |b| town.broken_in(response, b));
         let spared_broken = l.spare.map_or(0, |b| town.broken_in(response, b).1);
@@ -409,17 +637,54 @@ impl Challenges {
             collateral: Collateral {
                 pieces: pieces as u32,
                 goods: (now.goods - start.goods).saturating_sub(cargo_loose as usize) as u32,
-                people: (now.swept - start.swept) as u32,
+                // Raiders are meant to be swept (each may be a few times).
+                people: (now.swept - start.swept).saturating_sub(self.cast.len() * 4) as u32,
             },
             boxes: now.thrown - start.thrown,
+            lost: match c.objective {
+                Objective::Hold { .. } => {
+                    l.cargo.is_some_and(|i| goods.where_is(world, i).is_none())
+                }
+                _ => false,
+            },
+            in_zone: match &c.objective {
+                Objective::Build { zone, radius, .. } => {
+                    let zone = Vec3::from(*zone);
+                    let near = |p: &Vec3| p.distance(zone) <= *radius;
+                    (goods
+                        .resting_loose(world)
+                        .iter()
+                        .filter(|p| near(p))
+                        .count()
+                        + response
+                            .resting_debris(world)
+                            .iter()
+                            .filter(|p| near(p))
+                            .count()) as u32
+                }
+                _ => 0,
+            },
+            foes_down: if l.foes.is_some() {
+                people.beaten(&self.cast) as u32
+            } else {
+                0
+            },
+            hero_down: hero.health <= 0.0,
         };
+        if !cast_ready {
+            // Waiting for the people to come into the world: the clock
+            // has not started.
+            return Ok(());
+        }
         attempt.step(c, dt, &seen);
         let linked = match c.objective {
             Objective::Reach { .. } => true,
             Objective::Demolish { .. } => {
                 l.target.is_some() && (c.constraints.spare.is_empty() || l.spare.is_some())
             }
-            Objective::Haul { .. } => l.cargo.is_some(),
+            Objective::Haul { .. } | Objective::Hold { .. } => l.cargo.is_some(),
+            Objective::Build { .. } => true,
+            Objective::Rescue { .. } | Objective::Fight { .. } => cast_ready,
         };
         world.check("the challenge found what it is about", linked);
         if (1.5..1.7).contains(&attempt.elapsed_s) {
@@ -429,9 +694,30 @@ impl Challenges {
             );
         }
         world.report("challenge_elapsed", attempt.elapsed_s);
+        world.report(
+            "challenge_outcome",
+            match &attempt.outcome {
+                Outcome::Running => "running".to_string(),
+                Outcome::Won => "won".to_string(),
+                Outcome::Failed(why) => format!("failed: {why}"),
+            },
+        );
         world.report("challenge_stones", attempt.boxes);
         world.report("challenge_damage", attempt.collateral.points());
         world.report("challenge_target_down", seen.target_down);
+        world.report("challenge_in_zone", seen.in_zone);
+        world.report("challenge_foes_down", seen.foes_down);
+        if let Some(goal) = c.goal() {
+            world.report("challenge_goal", goal.to_array());
+        }
+        world.report(
+            "challenge_collateral",
+            [
+                attempt.collateral.pieces,
+                attempt.collateral.goods,
+                attempt.collateral.people,
+            ],
+        );
         if let Some(cargo) = seen.cargo {
             world.report(
                 "challenge_cargo_to_go_m",
@@ -450,6 +736,7 @@ impl Challenges {
             }
             self.mode = Mode::Over { index, attempt };
             self.mark(world, None)?;
+            people.release();
         }
         Ok(())
     }
@@ -463,6 +750,119 @@ impl Challenges {
             let id = world.spawn_pivot(Place::new(p.x, p.y, p.z));
             world.set_label(id, Label::new("Here").size(18.0).color(rgb(250, 205, 90)))?;
             self.marker = Some(id);
+        }
+        Ok(())
+    }
+
+    /// A challenge's own solution (`GRAV_SOLVE=1`): stones set where a
+    /// throw from the start can put them, with the programs that win.
+    /// Every challenge in the menu has one, and a verify run of it must
+    /// end in a win, so none ships that cannot be solved.
+    #[allow(clippy::too_many_arguments)]
+    pub fn solve(
+        &mut self,
+        world: &mut World,
+        boxes: &mut Boxes,
+        town: &Town,
+        goods: &Goods,
+        people: &People,
+        hero_at: Vec3,
+    ) -> EngineResult<()> {
+        let Mode::Playing { index, attempt, .. } = &self.mode else {
+            return Ok(());
+        };
+        if !self.solving {
+            return Ok(());
+        }
+        let (c, l, t) = (&self.list[*index], self.links[*index], attempt.elapsed_s);
+        let up = l.up;
+        let all = Face::ALL;
+        let attracting = boxes
+            .stones
+            .iter()
+            .position(|s| s.spec.charge == Charge::Attracting && s.is_ready());
+        let second = boxes
+            .stones
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.spec.charge == Charge::Attracting && s.is_ready())
+            .nth(1)
+            .map(|(i, _)| i);
+        let repelling = boxes
+            .stones
+            .iter()
+            .position(|s| s.spec.charge == Charge::Repelling && s.is_ready());
+        let mut set = |i: Option<usize>, at: Vec3, open: f32, drop: f32| {
+            if let Some(i) = i {
+                let s = &mut boxes.stones[i];
+                s.program = Program::only(&all, open, drop);
+                let frame = grav_core::facing(up, up.any_orthonormal_vector());
+                if s.throw(at, Vec3::ZERO, frame) {
+                    s.rest_at(at);
+                    boxes.thrown += 1;
+                }
+            }
+        };
+        let step = self.solve_step;
+        match (c.id.as_str(), step) {
+            // A repelling shard at the feet and a stone at the beacon:
+            // pushed up and pulled up together.
+            ("reach_beacon", 0) if t > 2.0 => {
+                set(repelling, hero_at + up * 0.3, 0.0, 40.0);
+                set(attracting, c.goal().unwrap_or(hero_at), 0.0, 40.0);
+                self.solve_step = 1;
+            }
+            ("demolish_shack", 0) if t > 2.0 => {
+                if let Some(at) = l.target.and_then(|(k, i)| town.place_of(k, i)) {
+                    set(attracting, at + up * 1.6, 0.0, 12.0);
+                }
+                self.solve_step = 1;
+            }
+            // Two hops: the first stone pulls the crate 3.5 m and comes
+            // down, the second opens as it does and pulls it on.
+            ("haul_crate", 0) if t > 2.0 => {
+                if let (Some(from), Some(to)) =
+                    (l.cargo.and_then(|i| goods.where_is(world, i)), c.goal())
+                {
+                    let dir = grav_core::along_ground(to - from, up);
+                    set(attracting, from + dir * 3.5 + up * 0.6, 0.2, 5.0);
+                    set(second, from + dir * 7.0 + up * 0.6, 5.5, 14.0);
+                }
+                self.solve_step = 1;
+            }
+            // A stone on the cask holds it against the shard's push.
+            ("hold_cask", 0) if t > 2.0 => {
+                if let Some(at) = l.cargo.and_then(|i| goods.where_is(world, i)) {
+                    set(attracting, at + up * 0.45, 0.0, 80.0);
+                }
+                self.solve_step = 1;
+            }
+            ("build_barricade", 0) if t > 2.0 => {
+                if let Some(zone) = c.goal() {
+                    set(attracting, zone + up * 0.7, 0.2, 8.0);
+                }
+                self.solve_step = 1;
+            }
+            // When the raiders are close, a stone among them, then the
+            // other where the rest are.
+            ("fight_raiders", n) if n < 2 => {
+                let foes: Vec<Vec3> = self
+                    .cast
+                    .iter()
+                    .filter_map(|&k| people.where_is(k))
+                    .collect();
+                let close: Vec<Vec3> = foes
+                    .iter()
+                    .copied()
+                    .filter(|p| p.distance(hero_at) < 8.0)
+                    .collect();
+                if !close.is_empty() && attracting.is_some() {
+                    let mid = close.iter().copied().sum::<Vec3>() / close.len() as f32;
+                    set(attracting, mid + up * 2.5, 0.0, 5.0);
+                    self.solve_step = n + 1;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -570,6 +970,10 @@ impl Challenges {
                         Objective::Reach { .. } => "Reach",
                         Objective::Demolish { .. } => "Demolish",
                         Objective::Haul { .. } => "Haul",
+                        Objective::Hold { .. } => "Hold",
+                        Objective::Build { .. } => "Build",
+                        Objective::Rescue { .. } => "Rescue",
+                        Objective::Fight { .. } => "Fight",
                     };
                     let text = format!("{kind}: {}{stars}", c.title);
                     if ui

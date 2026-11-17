@@ -32,6 +32,8 @@ pub struct Hero {
     /// Hero state for the HUD.
     pub pull_g: f32,
     pub drifting: bool,
+    /// The pull of the open stones on him now (set by the game each frame).
+    pub stone_pull: Vec3,
     pub walking_allowed: bool,
     pub grounded: bool,
     /// Degrees between the pull and straight into the ground underfoot.
@@ -105,6 +107,7 @@ impl Hero {
             last_fall: Vec3::ZERO,
             pull_g: 0.0,
             drifting: false,
+            stone_pull: Vec3::ZERO,
             walking_allowed: false,
             grounded: false,
             pull_tilt_deg: 0.0,
@@ -285,6 +288,12 @@ impl Hero {
             world.push_character(self.id, self.walk_v + self.slide)?;
             self.walk_v = Vec3::ZERO;
             self.slide = Vec3::ZERO;
+        } else {
+            // Held by a stone in the air: he settles where it holds him.
+            let dv = grav_core::held_damping(m, s.fall, self.stone_pull, dt);
+            if dv != Vec3::ZERO {
+                world.push_character(self.id, dv)?;
+            }
         }
         world.walk(self.id, self.walk_v + self.slide)?;
         if input.jump {

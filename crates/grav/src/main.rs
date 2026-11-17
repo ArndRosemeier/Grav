@@ -26,6 +26,7 @@ mod rock;
 mod save;
 mod settings;
 mod settle;
+mod shards;
 mod shots;
 mod sky;
 mod space;
@@ -69,6 +70,7 @@ struct Game {
     ambience: ambience::Ambience,
     weather: sky::HeartWeather,
     challenges: challenges::Challenges,
+    shards: shards::Shards,
     look: look::Look,
     tour: Option<shots::Tour>,
     demo: Option<Demo>,
@@ -124,6 +126,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
     let ambience = ambience::Ambience::new(world);
     let weather = sky::HeartWeather::new(&tuning.weather);
     let challenges = challenges::Challenges::new(&town, &goods);
+    let shards = shards::Shards::new(world)?;
     link::install(world, &base, HashMap::new());
     let tour = shots::Tour::from_env();
     // The scripted run opens stones; the screenshot tour wants the world alone.
@@ -154,6 +157,7 @@ fn setup(world: &mut World) -> EngineResult<Game> {
         ambience,
         weather,
         challenges,
+        shards,
         look,
         tour,
         demo,
@@ -293,6 +297,26 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     // Heart weather: the region's day, night and flares.
     g.weather.update(dt);
     g.weather.push(&mut field);
+    // A flare may shed a splinter of the heart somewhere near (shards.rs).
+    let shard_now = (frame.first || g.shards.fallen == 0 && frame.time < 0.05)
+        && std::env::var("GRAV_SHARD").is_ok();
+    let k = (g.weather.hours * 1000.0) as u32;
+    if shard_now || g.weather.flare_began && flora::hash(k, 1) < 0.5 {
+        let up = g.hero.up_or(world, g.hero.cam_up);
+        let side = grav_core::along_ground(
+            Vec3::new(flora::hash(k, 2) - 0.5, 0.3, flora::hash(k, 3) - 0.5),
+            up,
+        );
+        let far = if shard_now {
+            9.0
+        } else {
+            25.0 + 45.0 * flora::hash(k, 4)
+        };
+        let at = challenges::ground(world, feet + side * far, up);
+        g.shards.fall(world, at, up)?;
+    }
+    g.shards.update(world, dt)?;
+    field.sources.extend(g.shards.sources());
     g.weather.show(world, &g.look)?;
     if let Some((at, g_max, radius)) = g.tour.as_ref().and_then(|t| t.stone()) {
         // The screenshot tour's own open stone, for views that want one.
@@ -317,6 +341,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     g.grass.update(world, &field, eye)?;
     world.report("grass clumps", g.grass.count());
 
+    g.hero.stone_pull = g.pull.stones;
     g.hero.update(world, keys, &g.tuning.movement, dt)?;
     // Buildings a stone's field reaches become their bonded pieces.
     g.town
@@ -324,10 +349,13 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     // One rule for all that a pull can move: goods and people alike.
     movable::take_hold(&mut g.goods, world, &field, &g.base)?;
     movable::take_hold(&mut g.people, world, &field, &g.base)?;
-    g.people.update(world, &field, &g.base, dt)?;
+    g.people.update(world, &field, &g.base, feet, dt)?;
+    g.hero.health = (g.hero.health - g.people.hits).max(0.0);
     g.response.step(world, &field, feet, dt)?;
     g.waters.update(world, feet, &field, dt)?;
     g.ambience.update(world, feet);
+    g.challenges
+        .solve(world, &mut g.boxes, &g.town, &g.goods, &g.people, feet)?;
     g.challenges.update(
         world,
         &frame.input,
@@ -336,7 +364,8 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
         &g.town,
         &g.response,
         &g.goods,
-        &g.people,
+        &mut g.people,
+        &mut g.shards,
         dt,
     )?;
     if let Some(act) = g.challenges.file.take() {
@@ -426,6 +455,7 @@ fn frame_update(g: &mut Game, world: &mut World, frame: &Frame) -> EngineResult<
     world.report("ambience_loops", g.ambience.playing);
     world.report("weather_light", g.weather.now.light);
     world.report("challenges", g.challenges.count());
+    world.report("shards", g.shards.count());
     world.report("weather_flare_g", g.weather.now.flare_g);
     world.check("the cavern has its sound", g.ambience.has_bed());
     Ok(())

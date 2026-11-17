@@ -88,7 +88,26 @@ const RUN: f32 = 3.3;
 /// People run when an open stone's reach comes this near.
 const FEAR: f32 = 9.0;
 
+/// What a person is doing in a challenge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Role {
+    /// Goes about their day.
+    #[default]
+    Townsfolk,
+    /// A raider: comes at the hero and strikes when close.
+    Foe,
+    /// A raider knocked off their feet: out of the fight.
+    Beaten,
+}
+
+/// A raider strikes this hard (health per second) within this reach (m).
+const FOE_HIT: f32 = 9.0;
+const FOE_REACH: f32 = 1.7;
+/// Raiders come for the hero from this far.
+const FOE_SIGHT: f32 = 45.0;
+
 struct Person {
+    role: Role,
     /// Walking speed, m/s: what this crowd's walk clip carries at an easy step.
     pace: f32,
     crowd: CrowdId,
@@ -109,6 +128,8 @@ struct Person {
     at: Vec3,
     /// Off their feet or off their road: where they are and how they move.
     loose: Option<Loose>,
+    /// A raider who left the road to run at the hero: where they are.
+    chase: Option<Vec3>,
 }
 
 /// Someone a pull has taken off the road.
@@ -144,6 +165,8 @@ pub struct People {
     pub taken: usize,
     /// How many a pull has carried away for good.
     pub lost: usize,
+    /// Raiders' blows on the hero this frame (health).
+    pub hits: f32,
     /// How many a pull has ever taken off their feet (challenges count
     /// them as harmed, F6).
     pub swept: usize,
@@ -274,6 +297,7 @@ impl People {
             fleeing: 0,
             taken: 0,
             lost: 0,
+            hits: 0.0,
             swept: 0,
             unseen,
         }
@@ -328,6 +352,7 @@ impl People {
                 };
                 let agent = world.add_crowd_agent(crowd, Place::new(at.x, at.y, at.z))?;
                 self.persons.push(Person {
+                    role: Role::Townsfolk,
                     crowd,
                     agent,
                     road,
@@ -342,20 +367,80 @@ impl People {
                     pose: None,
                     at,
                     loose: None,
+                    chase: None,
                 });
             }
         }
         Ok(())
     }
 
-    /// Each frame: `field` is the pull now, `base` the world's own.
+    /// Give `n` of the goblins nearest `near` the role `role`, if that
+    /// many have come into the world yet; their keys.
+    pub fn cast(&mut self, near: Vec3, n: usize, role: Role) -> Vec<u32> {
+        let mut free: Vec<usize> = (0..self.persons.len())
+            .filter(|&i| {
+                let p = &self.persons[i];
+                p.role == Role::Townsfolk && p.loose.is_none() && p.road.folk() == Folk::Goblin
+            })
+            .collect();
+        if free.len() < n {
+            return Vec::new();
+        }
+        free.sort_by(|&a, &b| {
+            let d = |i: usize| self.persons[i].at.distance(near);
+            d(a).total_cmp(&d(b))
+        });
+        free.truncate(n);
+        for &i in &free {
+            self.persons[i].role = role;
+        }
+        free.iter().map(|&i| self.persons[i].key).collect()
+    }
+
+    /// Everyone back to their day (a challenge over).
+    pub fn release(&mut self) {
+        for p in &mut self.persons {
+            p.role = Role::Townsfolk;
+            if let Some(at) = p.chase.take() {
+                // Back to the road from where the chase left them.
+                p.loose.get_or_insert(Loose {
+                    body: None,
+                    at,
+                    down: 0.0,
+                });
+            }
+        }
+    }
+
+    /// Where the person `key` is (None once carried away for good).
+    pub fn where_is(&self, key: u32) -> Option<Vec3> {
+        let p = self.persons.iter().find(|p| p.key == key)?;
+        Some(p.loose.as_ref().map_or(p.at, |l| l.at))
+    }
+
+    /// How many of `keys` are out of the fight.
+    pub fn beaten(&self, keys: &[u32]) -> usize {
+        keys.iter()
+            .filter(|&&k| {
+                self.persons
+                    .iter()
+                    .find(|p| p.key == k)
+                    .is_none_or(|p| p.role == Role::Beaten)
+            })
+            .count()
+    }
+
+    /// Each frame: `field` is the pull now, `base` the world's own, `hero`
+    /// where the hero's feet are.
     pub fn update(
         &mut self,
         world: &mut World,
         field: &Field,
         base: &Field,
+        hero: Vec3,
         dt: f32,
     ) -> EngineResult<()> {
+        self.hits = 0.0;
         // At most one new character a frame (taking one in costs a moment).
         if let Some(made) = self.made.as_ref().and_then(|m| m.try_recv().ok()) {
             self.arrive(world, made)?;
@@ -373,6 +458,10 @@ impl People {
             // Off their feet or off their road.
             if let Some(l) = p.loose.as_mut() {
                 self.taken += 1;
+                if p.role == Role::Foe {
+                    p.role = Role::Beaten;
+                }
+                p.chase = None;
                 let now = field.acceleration(&BodyQuery::at(l.at));
                 let mut up = (-now).normalize_or(Vec3::Y);
                 let (mut pose, mut speed, mut front) = (Some("jump"), 0.0, Vec3::Z);
@@ -434,8 +523,35 @@ impl People {
                 .min_by(|a, b| a.1.total_cmp(&b.1));
             let mut speed = 0.0;
             let mut pose = None;
-            p.at = at;
-            if let Some((stone, _)) = threat {
+            let here = p.chase.unwrap_or(at);
+            p.at = here;
+            let to_hero = hero - here;
+            if p.role == Role::Foe && to_hero.length() < FOE_SIGHT {
+                // A raider leaves the road and runs straight at the hero
+                // over whatever ground there is, striking when close.
+                let up = base.up_at(here, Vec3::Y);
+                let dir = grav_core::along_ground(to_hero, up);
+                let mut next = here;
+                if to_hero.length() < FOE_REACH {
+                    self.hits += FOE_HIT * dt;
+                    pose = Some("talk");
+                } else {
+                    next = here + dir * RUN * dt;
+                    next = world
+                        .cast_ray(next + up * 1.2, -up, 4.0)
+                        .map_or(next, |hit| hit.point);
+                    (speed, pose) = (RUN, Some("jog"));
+                }
+                p.chase = Some(next);
+                p.at = next;
+                let rot = grav_core::upright(up, dir);
+                world.set_crowd_agent(p.crowd, p.agent, space::place(next, rot), speed)?;
+                if pose != p.pose {
+                    world.set_crowd_agent_pose(p.crowd, p.agent, pose)?;
+                    p.pose = pose;
+                }
+                continue;
+            } else if let Some((stone, _)) = threat {
                 self.fleeing += 1;
                 p.heading = if (at - stone).dot(ahead) >= 0.0 {
                     1.0

@@ -21,6 +21,14 @@ pub struct Movement {
     pub climb_slope_max_deg: f32,
     /// Below this the hero drifts, in g (P5).
     pub drift_below_g: f32,
+    /// In the air while a stone's pull holds him (at least
+    /// `held_by_stone_g`), motion across the pull and away from it dies
+    /// away at this rate, per second (see [`held_damping`]): he settles
+    /// where the stone holds him instead of swinging through it and
+    /// around (Arnd, 2026-11-16: "nobody can aim while being thrown
+    /// around").
+    pub held_drag: f32,
+    pub held_by_stone_g: f32,
     /// Constant walk speed, m/s (P6).
     pub walk_speed: f32,
     /// Jump height under Earth's gravity, metres (P6): sets the constant
@@ -75,6 +83,8 @@ impl Default for Movement {
             climb_slope_min_deg: 30.0,
             climb_slope_max_deg: 72.0,
             drift_below_g: 0.05,
+            held_drag: 3.0,
+            held_by_stone_g: 0.3,
             walk_speed: 3.6,
             jump_height_on_earth: 1.2,
             safe_impact: 8.0,
@@ -123,6 +133,23 @@ pub fn climb_slope_deg(m: &Movement, pull_g: f32) -> f32 {
 /// P9: the grip of his feet under `accel`: the pull along the ground he
 /// braces against, as a share of the press onto it. It holds exactly up to
 /// the slope he can climb.
+/// The change to the hero's air velocity `v` over `dt` while the stones'
+/// pull on him is `stones` (m/s²): nothing below `held_by_stone_g`;
+/// above it, the part of his motion across the pull and the part away
+/// from it slow by [`crate::drag_keep`] at `held_drag`. Motion along the
+/// pull is left alone, so a stone still draws him in at full speed, but
+/// every swing past it and every turn around it dies away.
+pub fn held_damping(m: &Movement, v: Vec3, stones: Vec3, dt: f32) -> Vec3 {
+    if stones.length() < m.held_by_stone_g * one_g() {
+        return Vec3::ZERO;
+    }
+    let dir = stones.normalize();
+    let along = v.dot(dir);
+    let across = v - dir * along;
+    let away = dir * along.min(0.0);
+    -(across + away) * (1.0 - crate::drag_keep(m.held_drag, dt))
+}
+
 pub fn grip(m: &Movement, accel: Vec3) -> f32 {
     climb_slope_deg(m, accel.length() / one_g())
         .to_radians()
@@ -201,6 +228,29 @@ pub fn walk_accel(m: &Movement, accel: Vec3, normal: Vec3) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Arnd's orbit: a stone above the hero lifts him, and he must come to
+    /// rest at it, not swing through it and around it.
+    #[test]
+    fn a_stone_overhead_holds_the_hero_still() {
+        let m = Movement::default();
+        let g = one_g();
+        let stone_pull =
+            |p: Vec3| -p.normalize_or_zero() * 1.5 * g * (1.0 - p.length() / 15.0).max(0.0);
+        let (mut p, mut v) = (Vec3::new(3.0, -4.0, 0.0), Vec3::new(0.0, 0.0, 3.0));
+        let dt = 1.0 / 60.0;
+        for _ in 0..1200 {
+            let stones = stone_pull(p);
+            v += (stones + Vec3::new(0.0, -g, 0.0)) * dt;
+            v += held_damping(&m, v, stones, dt);
+            p += v * dt;
+        }
+        assert!(p.length() < 0.5, "still {} m from the stone", p.length());
+        assert!(v.length() < 0.5, "still moving at {} m/s", v.length());
+        // Drawn in, he is not slowed.
+        let up = Vec3::Y * g;
+        assert_eq!(held_damping(&m, Vec3::Y * 2.0, up, dt), Vec3::ZERO);
+    }
 
     #[test]
     fn jump_height_scales_with_one_over_pull() {
