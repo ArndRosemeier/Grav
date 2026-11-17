@@ -126,6 +126,17 @@ pub fn ground(world: &World, p: Vec3, up: Vec3) -> Vec3 {
         .map_or(p, |hit| hit.point + up * 0.05)
 }
 
+/// How steep the rock is under `p`, degrees from level (None: no ground).
+fn slope_deg(p: Vec3, up: Vec3) -> Option<f32> {
+    let a = up.any_orthonormal_vector();
+    let b = up.cross(a);
+    let o = ground_point(p, up)?;
+    let pa = ground_point(p + a, up)?;
+    let pb = ground_point(p + b, up)?;
+    let n = (pa - o).cross(pb - o).normalize_or_zero();
+    Some(n.dot(up).abs().clamp(0.0, 1.0).acos().to_degrees())
+}
+
 /// The rock's surface under `p` along `-up`, from the rock's own shape.
 fn ground_point(p: Vec3, up: Vec3) -> Option<Vec3> {
     let rock = crate::rock::shared();
@@ -283,6 +294,19 @@ impl Challenges {
         // Haul: the crate with the most room around it and along a way
         // nine metres on, so stones that hop it there need not come near
         // a building (a stone breaks light work within about 5 m).
+        // Directions along the ground around a point, the world's up
+        // there, and a penalty for being off the roads (steep, rough).
+        let up_at = |p: Vec3| crate::space::base_field().up_at(p, Vec3::Y);
+        let around = move |p: Vec3| {
+            let up = up_at(p);
+            let a = up.any_orthonormal_vector();
+            let b = up.cross(a);
+            (0..16).map(move |n| {
+                let t = n as f32 / 16.0 * std::f32::consts::TAU;
+                a * t.cos() + b * t.sin()
+            })
+        };
+        let flat = |p: Vec3| 0.2 * crate::rock::Rock::path_distance(p).min(20.0);
         let edge = |p: Vec3| {
             sites
                 .iter()
@@ -291,28 +315,20 @@ impl Challenges {
                 .fold(f32::MAX, f32::min)
         };
         let way = of(Make::Crate)
-            .flat_map(|c| {
-                let up = c.rot * Vec3::Y;
-                let a = up.any_orthonormal_vector();
-                let b = up.cross(a);
-                (0..16).map(move |n| {
-                    let angle = n as f32 / 16.0 * std::f32::consts::TAU;
-                    (c, a * angle.cos() + b * angle.sin())
-                })
-            })
-            .map(|(c, dir)| {
+            .flat_map(|c| around(c.at).map(move |dir| (c, dir)))
+            .filter_map(|(c, dir)| {
                 // Where the two stones hang must be clear; the end only
-                // needs to be off the buildings.
+                // needs to be off the buildings, on ground.
                 let stones = edge(c.at + dir * 3.5).min(edge(c.at + dir * 7.0));
-                let end = edge(c.at + dir * 9.0);
-                (c, dir, if end > 1.0 { stones } else { -1.0 })
+                let end = c.at + dir * 9.0;
+                let to = ground_point(end, up_at(end)).filter(|_| edge(end) > 1.0)?;
+                Some((c, to, stones - flat(c.at + dir * 4.5)))
             })
-            .filter(|w| w.2 > 5.0)
+            .filter(|w| w.2 > 3.0)
             .max_by(|x, y| x.2.total_cmp(&y.2));
-        if let Some((c, dir, _)) = way {
-            let up = c.rot * Vec3::Y;
-            let to = ground_point(c.at + dir * 9.0, up);
-            if let Some(to) = to {
+        if let Some((c, to, _)) = way {
+            let up = up_at(c.at);
+            {
                 let start = open_spot(c.at, up, 6.0, c.at - to);
                 list.push(Challenge {
                     id: "haul_crate".into(),
@@ -390,12 +406,7 @@ impl Challenges {
             });
         }
 
-        // Build: a barricade in front of a goblin shack, from its goods
-        // (the shack of the near camp with the most of them out front).
-        let near_camp = |p: Vec3| {
-            let theta = p.x.atan2(p.y);
-            (theta - 50.0_f32.to_radians()).abs() < 0.3
-        };
+        // Build: a barricade in front of a goblin shack, from its goods.
         let wares = |s: &settle::Site| -> Vec<Vec3> {
             of(Make::Crate)
                 .chain(of(Make::Sack))
@@ -403,18 +414,33 @@ impl Challenges {
                 .map(|g| g.at)
                 .collect()
         };
+        // Of the shacks with goods out front, the one where a zone three
+        // metres from the goods has the most room, on even ground, so the
+        // stone that gathers them spares the shack.
         let stocked = shacks
             .iter()
-            .filter(|s| near_camp(s.at))
-            .max_by_key(|s| wares(s).len())
-            .filter(|s| wares(s).len() >= 3);
-        if let Some(shack) = stocked {
-            let goods_at = wares(shack);
-            let middle = goods_at.iter().copied().sum::<Vec3>() / goods_at.len() as f32;
-            let up = shack.rot * Vec3::Y;
-            let out = grav_core::along_ground(middle - shack.at, up);
-            let zone = ground_point(middle + out * 3.0, up).unwrap_or(middle + out * 3.0);
-            let start = open_spot(zone, up, 9.0, out);
+            .filter(|s| wares(s).len() >= 3)
+            .flat_map(|s| {
+                let goods_at = wares(s);
+                let middle = goods_at.iter().copied().sum::<Vec3>() / goods_at.len() as f32;
+                around(middle).map(move |d| (s, middle + d * 3.0, d))
+            })
+            .filter(|(_, zone, _)| slope_deg(*zone, up_at(*zone)).is_some_and(|a| a < 25.0))
+            .map(|(s, zone, d)| (s, zone, d, edge(zone + d) - flat(zone)))
+            .max_by(|x, y| x.3.total_cmp(&y.3));
+        if let Some((_, zone, out, _)) = stocked {
+            let up = up_at(zone);
+            let zone = ground_point(zone, up).unwrap_or(zone);
+            // The hero waits on even ground nine metres out.
+            let start = around(zone)
+                .map(|d| zone + d * 9.0)
+                .filter(|p| slope_deg(*p, up).is_some_and(|a| a < 25.0))
+                .max_by(|p, q| {
+                    (edge(*p) - 0.3 * p.distance(zone + out * 9.0))
+                        .total_cmp(&(edge(*q) - 0.3 * q.distance(zone + out * 9.0)))
+                })
+                .and_then(|p| ground_point(p, up))
+                .unwrap_or_else(|| open_spot(zone, up, 9.0, out));
             list.push(Challenge {
                 id: "build_barricade".into(),
                 title: "A barricade".into(),
