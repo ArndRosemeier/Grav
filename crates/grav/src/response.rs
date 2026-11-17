@@ -18,6 +18,8 @@ pub struct Response {
     /// Broken pieces and how long ago they broke.
     debris: Vec<(EntityId, f32)>,
     pub broken_total: usize,
+    /// Where pieces broke lately (the last 256), for reports.
+    pub broken_at: Vec<Vec3>,
     pub warning_now: usize,
     /// Pieces tinted by the placing preview.
     previewed: Vec<usize>,
@@ -81,6 +83,7 @@ impl Response {
             rest,
             debris: Vec::new(),
             broken_total: 0,
+            broken_at: Vec::new(),
             warning_now: 0,
             previewed: Vec::new(),
             signs: 0,
@@ -285,6 +288,10 @@ impl Response {
             crate::movable::loose_body(world, p.entity, density(class))?;
             self.debris.push((p.entity, 0.0));
             self.broken_total += 1;
+            if self.broken_at.len() >= 256 {
+                self.broken_at.remove(0);
+            }
+            self.broken_at.push(at);
         }
         self.warning_now = self
             .built

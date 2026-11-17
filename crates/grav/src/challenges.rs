@@ -47,6 +47,8 @@ struct Links {
     shard: Option<Vec3>,
     /// Raiders: this many goblins nearest this place.
     foes: Option<(Vec3, usize)>,
+    /// Where the goods for a barricade lie.
+    aim: Option<Vec3>,
 }
 
 /// The world's tallies when an attempt began.
@@ -406,29 +408,40 @@ impl Challenges {
             });
         }
 
-        // Build: a barricade in front of a goblin shack, from its goods.
-        let wares = |s: &settle::Site| -> Vec<Vec3> {
-            of(Make::Crate)
-                .chain(of(Make::Sack))
-                .filter(|g| g.at.distance(s.at) < 4.5)
-                .map(|g| g.at)
-                .collect()
-        };
-        // Of the shacks with goods out front, the one where a zone three
-        // metres from the goods has the most room, on even ground, so the
-        // stone that gathers them spares the shack.
-        let stocked = shacks
+        // Build: a barricade from goods lying about. The zone is beside a
+        // heap of them (at least four within 4 m, which a stone there
+        // draws in), with the most room from buildings, on even ground,
+        // so the stone that gathers them spares the houses.
+        let loose: Vec<Vec3> = sites
             .iter()
-            .filter(|s| wares(s).len() >= 3)
-            .flat_map(|s| {
-                let goods_at = wares(s);
-                let middle = goods_at.iter().copied().sum::<Vec3>() / goods_at.len() as f32;
-                around(middle).map(move |d| (s, middle + d * 3.0, d))
+            .filter(|g| g.make.loose())
+            .map(|g| g.at)
+            .collect();
+        let stocked = loose
+            .iter()
+            .filter_map(|&g| {
+                // A heap: goods within 3 m of this one, and their middle.
+                let heap: Vec<Vec3> = loose
+                    .iter()
+                    .copied()
+                    .filter(|q| q.distance(g) < 3.0)
+                    .collect();
+                if heap.len() < 4 {
+                    return None;
+                }
+                let middle = heap.iter().copied().sum::<Vec3>() / heap.len() as f32;
+                // Out from the nearest house, 2.5 m past the heap.
+                let house = sites
+                    .iter()
+                    .filter(|s| !s.make.loose())
+                    .min_by(|a, b| a.at.distance(middle).total_cmp(&b.at.distance(middle)))?;
+                let out = grav_core::along_ground(middle - house.at, up_at(middle));
+                let zone = middle + out * 2.5;
+                slope_deg(zone, up_at(zone)).filter(|a| *a < 25.0)?;
+                Some((middle, zone, out, edge(zone) - flat(zone)))
             })
-            .filter(|(_, zone, _)| slope_deg(*zone, up_at(*zone)).is_some_and(|a| a < 25.0))
-            .map(|(s, zone, d)| (s, zone, d, edge(zone + d) - flat(zone)))
             .max_by(|x, y| x.3.total_cmp(&y.3));
-        if let Some((_, zone, out, _)) = stocked {
+        if let Some((middle, zone, out, _)) = stocked {
             let up = up_at(zone);
             let zone = ground_point(zone, up).unwrap_or(zone);
             // The hero waits on even ground nine metres out.
@@ -444,7 +457,7 @@ impl Challenges {
             list.push(Challenge {
                 id: "build_barricade".into(),
                 title: "A barricade".into(),
-                brief: "Raiders are coming. Pile three loose things (goods, planks, rubble) in the marked place in front of the shack to block the way.".into(),
+                brief: "Raiders are coming. Pile three loose things (goods, planks, rubble) in the marked place to block the way.".into(),
                 start: start.into(),
                 start_yaw_deg: 0.0,
                 objective: Objective::Build {
@@ -469,6 +482,7 @@ impl Challenges {
             });
             links.push(Links {
                 up,
+                aim: Some(middle),
                 ..Default::default()
             });
         }
@@ -733,6 +747,9 @@ impl Challenges {
         world.report("challenge_target_down", seen.target_down);
         world.report("challenge_in_zone", seen.in_zone);
         world.report("challenge_foes_down", seen.foes_down);
+        if let (Some(first), Some(last)) = (response.broken_at.first(), response.broken_at.last()) {
+            world.report("broken_first_last", [first.to_array(), last.to_array()]);
+        }
         if let Some(goal) = c.goal() {
             world.report("challenge_goal", goal.to_array());
         }
@@ -818,11 +835,17 @@ impl Challenges {
             .stones
             .iter()
             .position(|s| s.spec.charge == Charge::Repelling && s.is_ready());
-        let mut set = |i: Option<usize>, at: Vec3, open: f32, drop: f32| {
+        // A stone set at `at`, opening after `open` s, dropping after
+        // `drop` s; all faces, or only the front one turned to `aim`.
+        let mut set = |i: Option<usize>, at: Vec3, open: f32, drop: f32, aim: Option<Vec3>| {
             if let Some(i) = i {
                 let s = &mut boxes.stones[i];
-                s.program = Program::only(&all, open, drop);
-                let frame = grav_core::facing(up, up.any_orthonormal_vector());
+                let front = aim.map(|a| grav_core::along_ground(a - at, up));
+                s.program = match front {
+                    Some(_) => Program::only(&[Face::Front], open, drop),
+                    None => Program::only(&all, open, drop),
+                };
+                let frame = grav_core::facing(up, front.unwrap_or(up.any_orthonormal_vector()));
                 if s.throw(at, Vec3::ZERO, frame) {
                     s.rest_at(at);
                     boxes.thrown += 1;
@@ -834,13 +857,13 @@ impl Challenges {
             // A repelling shard at the feet and a stone at the beacon:
             // pushed up and pulled up together.
             ("reach_beacon", 0) if t > 2.0 => {
-                set(repelling, hero_at + up * 0.3, 0.0, 40.0);
-                set(attracting, c.goal().unwrap_or(hero_at), 0.0, 40.0);
+                set(repelling, hero_at + up * 0.3, 0.0, 40.0, None);
+                set(attracting, c.goal().unwrap_or(hero_at), 0.0, 40.0, None);
                 self.solve_step = 1;
             }
             ("demolish_shack", 0) if t > 2.0 => {
                 if let Some(at) = l.target.and_then(|(k, i)| town.place_of(k, i)) {
-                    set(attracting, at + up * 1.6, 0.0, 12.0);
+                    set(attracting, at + up * 1.6, 0.0, 12.0, None);
                 }
                 self.solve_step = 1;
             }
@@ -851,21 +874,23 @@ impl Challenges {
                     (l.cargo.and_then(|i| goods.where_is(world, i)), c.goal())
                 {
                     let dir = grav_core::along_ground(to - from, up);
-                    set(attracting, from + dir * 3.5 + up * 0.6, 0.2, 5.0);
-                    set(second, from + dir * 7.0 + up * 0.6, 5.5, 14.0);
+                    set(attracting, from + dir * 3.5 + up * 0.6, 0.2, 5.0, None);
+                    set(second, from + dir * 7.0 + up * 0.6, 5.5, 14.0, None);
                 }
                 self.solve_step = 1;
             }
             // A stone on the cask holds it against the shard's push.
             ("hold_cask", 0) if t > 2.0 => {
                 if let Some(at) = l.cargo.and_then(|i| goods.where_is(world, i)) {
-                    set(attracting, at + up * 0.45, 0.0, 80.0);
+                    set(attracting, at + up * 0.45, 0.0, 80.0, None);
                 }
                 self.solve_step = 1;
             }
             ("build_barricade", 0) if t > 2.0 => {
                 if let Some(zone) = c.goal() {
-                    set(attracting, zone + up * 0.7, 0.2, 8.0);
+                    // Only the face towards the goods: the house behind
+                    // the stone feels nothing.
+                    set(attracting, zone + up * 0.7, 0.2, 8.0, l.aim);
                 }
                 self.solve_step = 1;
             }
@@ -884,7 +909,7 @@ impl Challenges {
                     .collect();
                 if !close.is_empty() && attracting.is_some() {
                     let mid = close.iter().copied().sum::<Vec3>() / close.len() as f32;
-                    set(attracting, mid + up * 2.5, 0.0, 5.0);
+                    set(attracting, mid + up * 2.5, 0.0, 5.0, None);
                     self.solve_step = n + 1;
                 }
             }
